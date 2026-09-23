@@ -721,7 +721,7 @@ def search_cities(q, country=""):
         pattern = urllib.parse.quote(safe + "*")
     else:
         pattern = urllib.parse.quote("*" + safe + "*")
-    featured = FEATURED_INT.get(country) or ()
+    featured = FEATURED_INT.get(country) or (FEATURED_FR if country == "FR" else ())
     term_l = _fold_query(term)
     pinned = []
     if featured:
@@ -745,24 +745,27 @@ def search_cities(q, country=""):
         + pattern
         + ")"
         + zone
-        + "&order=name.asc&limit=40"
+        + "&order=name.asc&limit=80"
     )
-    seen = {row.get("id") for row in pinned}
+    featured_ids = {row.get("id") for row in pinned}
+    seen = set(featured_ids)
     merged = list(pinned)
     for row in local:
         if row.get("id") in seen:
             continue
         merged.append(row)
         seen.add(row.get("id"))
-        if len(merged) >= 12:
-            break
-    local = merged[:12]
     if term:
         term_l = _fold_query(term)
-        local.sort(key=lambda row: (
+        merged.sort(key=lambda row: (
+            0 if row.get("id") in featured_ids else 1,
+            0 if _fold_query(row.get("name") or "") == term_l else 1,
             0 if _fold_query(row.get("name") or "").startswith(term_l) else 1,
+            0 if "(" not in (row.get("name") or "") else 1,
+            len(row.get("name") or ""),
             row.get("name") or "",
         ))
+    local = merged[:12]
     if country == "FR" or country in FEATURED_INT or len(term) <= 2:
         return local
     extra = nominatim_cities(term, country)
@@ -2638,7 +2641,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/place-story":
                 payload = place_story(qs)
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 93}
+                payload = {"ok": True, "app": "sinki", "v": 94}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":

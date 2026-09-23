@@ -523,6 +523,22 @@ function cityLabel(c) {
   if (c.country_code && c.country_code !== "FR") return c.name + " · " + c.country_code;
   return c.name;
 }
+function foldName(s) {
+  return String(s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+function pickExactCity(typed, rows) {
+  const q = foldName(typed);
+  if (!q || !Array.isArray(rows)) return null;
+  return rows.find((c) => foldName(c.name) === q) || null;
+}
+function syncCityContinue() {
+  const go = document.querySelector('[data-act="to2"]');
+  if (go) go.disabled = !state.city;
+}
 function countryParam() {
   if (onHomeArea()) return (state.homeCountry?.code || "FR").toUpperCase();
   if (state.area === "france") return "FR";
@@ -2497,12 +2513,20 @@ function bind() {
         state.query = typed;
         const cc = countryParam();
         if (!cc) { state.suggestions = []; paintLiveSearch(); return; }
-        const r = await fetch("/api/cities?country=" + encodeURIComponent(cc) + "&q=" + encodeURIComponent(typed.trim()));
+        let rows = [];
+        try {
+          const r = await fetch("/api/cities?country=" + encodeURIComponent(cc) + "&q=" + encodeURIComponent(typed.trim()));
+          if ($("#cityq") && $("#cityq").value !== typed) return;
+          const data = await r.json();
+          rows = Array.isArray(data) ? data : [];
+        } catch {
+          rows = [];
+        }
         if ($("#cityq") && $("#cityq").value !== typed) return;
-        const rows = await r.json();
-        state.suggestions = Array.isArray(rows) ? rows : [];
-        if ($("#cityq") && $("#cityq").value !== typed) return;
+        state.suggestions = rows;
+        state.city = pickExactCity(typed, rows);
         paintLiveSearch();
+        syncCityContinue();
       }, 180);
     };
   }
