@@ -523,6 +523,16 @@ function cityLabel(c) {
   if (c.country_code && c.country_code !== "FR") return c.name + " · " + c.country_code;
   return c.name;
 }
+function chatDisplayName() {
+  const acc = state.account;
+  const first = (acc && acc.first_name ? String(acc.first_name) : "").trim();
+  if (first) return first.slice(0, 40);
+  const typed = ($("#nick") && $("#nick").value.trim()) || String(state.groupNick || "").trim();
+  if (typed) return typed.slice(0, 40);
+  const nick = (acc && acc.nick ? String(acc.nick) : "").trim();
+  if (nick) return nick.slice(0, 40);
+  return "Pote";
+}
 function foldName(s) {
   return String(s || "")
     .normalize("NFD")
@@ -1822,11 +1832,15 @@ function render() {
     body = `<div class="page has-nav"><h1>${t("favs_title")}</h1>${state.favs.length ? mascot("emerveillee", t("favs_full")) + state.favs.map((item) => cardHtml(item, "fav")).join("") : mascot("emerveillee", t("favs_empty"))}${navHtml("favs")}</div>`;
   } else if (state.screen === "group") {
     const chat = state.groupChat.map((m) => `<div class="bubble"><div class="who">${escapeHtml(m.name)}</div>${escapeHtml(m.text || "")}${m.outing ? `<div class="share-card">${escapeHtml(m.outing.name)} · ${priceLabel(m.outing)}</div>` : ""}</div>`).join("");
+    const autoNick = String((state.account && state.account.first_name) || "").trim();
+    const nickField = autoNick
+      ? `<p class="hint">${t("nick_auto", { name: autoNick })}</p>`
+      : `<label>${t("nick")}</label>
+      <input type="text" id="nick" placeholder="Alex" value="${escapeHtml(state.groupNick)}" />`;
     body = `<div class="page has-nav">
       <h1>${t("group_title")}</h1>
       ${state.groupCode ? mascot("heureuse", t("group_on")) : mascot("heureuse", t("group_off"))}
-      <label>${t("nick")}</label>
-      <input type="text" id="nick" placeholder="Alex" value="${escapeHtml(state.groupNick)}" />
+      ${nickField}
       ${state.groupCode ? `<p class="hint">${t("group_code")} : <strong>${escapeHtml(state.groupCode)}</strong> — ${escapeHtml(state.groupLabel || "")}</p>
         ${state.shareHint ? `<p class="hint">${escapeHtml(state.shareHint)}</p>` : ""}
         <button class="btn outline" data-act="copy-code">${t("copy_code")}</button>
@@ -2264,7 +2278,7 @@ function bind() {
     }
     if (act === "create-group") {
       const name = ($("#gname") && $("#gname").value.trim()) || "Groupe Sinki";
-      const nick = ($("#nick") && $("#nick").value.trim()) || "Pote";
+      const nick = chatDisplayName();
       state.groupNick = nick;
       localStorage.setItem("sinki-nick", nick);
       const r = await fetch("/api/groups", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
@@ -2277,7 +2291,7 @@ function bind() {
     }
     if (act === "join-group") {
       const code = (($("#gcode") && $("#gcode").value) || "").trim().toUpperCase();
-      const nick = ($("#nick") && $("#nick").value.trim()) || "Pote";
+      const nick = chatDisplayName();
       state.groupNick = nick;
       localStorage.setItem("sinki-nick", nick);
       const r = await fetch("/api/groups?code=" + encodeURIComponent(code));
@@ -2812,7 +2826,7 @@ async function sendGroupMessage(text, outing) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       code: state.groupCode,
-      name: state.groupNick || "Pote",
+      name: chatDisplayName(),
       text,
       outing: outing ? { id: outing.id, name: outing.name, price_min: outing.price_min, price_max: outing.price_max, currency: outing.currency, photo_url: outing.photo_url, category: outing.category } : null,
     }),
@@ -2838,7 +2852,7 @@ async function shareAndVote() {
     alert(t("err_two"));
     return;
   }
-  const nick = ($("#nick") && $("#nick").value.trim()) || state.groupNick || "Pote";
+  const nick = chatDisplayName();
   state.groupNick = nick;
   localStorage.setItem("sinki-nick", nick);
   state.shareBusy = true;
@@ -2899,7 +2913,7 @@ async function shareAndVote() {
 
 async function voteOuting(outingId) {
   if (!state.groupCode) return;
-  const nick = ($("#nick") && $("#nick").value.trim()) || state.groupNick || "Pote";
+  const nick = chatDisplayName();
   state.groupNick = nick;
   localStorage.setItem("sinki-nick", nick);
   const r = await fetch("/api/groups/vote", {
@@ -3100,9 +3114,10 @@ async function verifyLoginCode() {
     if (!r.ok) throw new Error(friendlyAuthError(data.error || t("err_bad_code")));
     state.session = { access_token: data.access_token, refresh_token: data.refresh_token };
     state.account = data.user;
-    if (state.authPseudo) {
-      state.groupNick = state.authPseudo;
-      localStorage.setItem("sinki-nick", state.authPseudo);
+    const chatName = (state.account && state.account.first_name) || state.authFirst || state.authPseudo;
+    if (chatName) {
+      state.groupNick = String(chatName).trim();
+      localStorage.setItem("sinki-nick", state.groupNick);
     }
     save("sinki-session", state.session);
     save("sinki-account", state.account);
@@ -3174,8 +3189,8 @@ async function saveProfileEdits() {
   state.account.first_name = first;
   state.account.last_name = last;
   state.account.nick = nick;
-  state.groupNick = nick || state.groupNick;
-  if (nick) localStorage.setItem("sinki-nick", nick);
+  state.groupNick = first;
+  localStorage.setItem("sinki-nick", first);
   save("sinki-account", state.account);
   state.profileBusy = true;
   state.profileHint = "";
@@ -3252,9 +3267,10 @@ async function applyRemoteAccount() {
   save("sinki-favs", state.favs);
   state.plans = mergeById(state.plans, (me.plans || []).map(normalizeOuting));
   save("sinki-plans", state.plans);
-  if (me.nick) {
-    state.groupNick = me.nick;
-    localStorage.setItem("sinki-nick", me.nick);
+  const chatName = (me.user && me.user.first_name) || me.nick;
+  if (chatName) {
+    state.groupNick = chatName;
+    localStorage.setItem("sinki-nick", chatName);
   }
   if (me.group_code) {
     state.groupCode = me.group_code;
@@ -3390,7 +3406,7 @@ async function restorePurchases() {
 async function persistAccount() {
   if (!state.session?.access_token) return;
   const body = {
-    nick: state.groupNick || state.account?.nick || "",
+    nick: state.account?.nick || "",
     first_name: state.account?.first_name || state.authFirst || "",
     last_name: state.account?.last_name || state.authLast || "",
     phone: state.account?.phone || "",

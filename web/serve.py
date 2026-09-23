@@ -2473,7 +2473,7 @@ def sync_account(user, bearer, body):
     plans = compact_plans(body.get("plans") or [])
     group = None
     try:
-        group = attach_user_group(uid, nick, group_code)
+        group = attach_user_group(uid, first_name or nick, group_code)
     except Exception:
         group = None
     if group:
@@ -2641,7 +2641,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/place-story":
                 payload = place_story(qs)
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 94}
+                payload = {"ok": True, "app": "sinki", "v": 95}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
