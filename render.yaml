@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: sinki
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: "8080"
+      - key: SUPABASE_URL
+        value: https://smiamxvoztjmvjidmreh.supabase.co
+      - key: SUPABASE_SERVICE_ROLE
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        value: Sinki <beth.t@example.com>
