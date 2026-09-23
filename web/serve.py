@@ -11,8 +11,10 @@ import smtplib
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unicodedata
+import http.client
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -478,8 +480,11 @@ def diversify_categories(rows, limit=120):
     return mixed
 
 
+_tls = threading.local()
+
+
 def supabase_request(method, path, body=None):
-    base = os.environ["SUPABASE_URL"].rstrip("/")
+    parsed = urllib.parse.urlparse(os.environ["SUPABASE_URL"])
     key = os.environ["SUPABASE_SERVICE_ROLE"]
     data = None if body is None else json.dumps(body).encode("utf-8")
     headers = {
@@ -487,11 +492,39 @@ def supabase_request(method, path, body=None):
         "Authorization": "Bearer " + key,
         "Content-Type": "application/json",
         "Prefer": "return=representation",
+        "Connection": "keep-alive",
     }
-    req = urllib.request.Request(base + "/rest/v1/" + path, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        raw = resp.read().decode("utf-8")
-        return json.loads(raw) if raw else []
+    target = (parsed.path.rstrip("/") or "") + "/rest/v1/" + path
+    url = parsed.scheme + "://" + parsed.netloc + target
+    timeout = 12 if method == "GET" else 60
+    last_err = None
+    for attempt in (0, 1):
+        conn = getattr(_tls, "sb", None)
+        if conn is None:
+            conn = http.client.HTTPSConnection(parsed.hostname, parsed.port or 443, timeout=timeout)
+            _tls.sb = conn
+        try:
+            conn.request(method, target, body=data, headers=headers)
+            resp = conn.getresponse()
+            raw = resp.read()
+            if resp.status >= 400:
+                raise urllib.error.HTTPError(url, resp.status, resp.reason, resp.headers, io.BytesIO(raw))
+            text = raw.decode("utf-8")
+            return json.loads(text) if text else []
+        except urllib.error.HTTPError:
+            raise
+        except (http.client.HTTPException, ConnectionError, BrokenPipeError, OSError) as exc:
+            last_err = exc
+            try:
+                conn.close()
+            except Exception:
+                pass
+            _tls.sb = None
+            if attempt:
+                raise
+    if last_err:
+        raise last_err
+    return []
 
 
 def supabase_select(query):
@@ -701,43 +734,79 @@ def lookup_geo(ip):
     return payload
 
 
+FEATURED_ROWS = {}
+FEATURED_LOCK = threading.Lock()
+CITY_SEARCH_CACHE = {}
+CITY_SEARCH_LOCK = threading.Lock()
+CITY_SEARCH_TTL = 600
+
+
+def featured_city_rows(country):
+    country = (country or "").strip().upper()
+    with FEATURED_LOCK:
+        cached = FEATURED_ROWS.get(country)
+        if cached is not None:
+            return cached
+    slugs = FEATURED_INT.get(country) or (FEATURED_FR if country == "FR" else ())
+    rows = []
+    if slugs:
+        rows = supabase_select(
+            "cities?select=id,name,slug,latitude,longitude,country_code&is_active=eq.true&slug=in.("
+            + ",".join(slugs)
+            + ")&country_code=eq."
+            + country
+            + "&limit=20"
+        )
+    with FEATURED_LOCK:
+        FEATURED_ROWS[country] = rows
+    return rows
+
+
+def _cached_city_search(key):
+    with CITY_SEARCH_LOCK:
+        hit = CITY_SEARCH_CACHE.get(key)
+        if hit and time.time() - hit[0] < CITY_SEARCH_TTL:
+            return hit[1]
+    return None
+
+
+def _store_city_search(key, rows):
+    with CITY_SEARCH_LOCK:
+        CITY_SEARCH_CACHE[key] = (time.time(), rows)
+        if len(CITY_SEARCH_CACHE) > 400:
+            oldest = sorted(CITY_SEARCH_CACHE.items(), key=lambda item: item[1][0])[:80]
+            for old_key, _ in oldest:
+                CITY_SEARCH_CACHE.pop(old_key, None)
+
+
 def search_cities(q, country=""):
     country = (country or "").strip().upper()
     term = (q or "").strip()
     if country in ("", "INT") or len(country) != 2:
         return []
     zone = "&country_code=eq." + country
+    term_l = _fold_query(term)
+    cache_key = (country, term_l)
+    cached = _cached_city_search(cache_key)
+    if cached is not None:
+        return cached
     if len(term) < 1:
-        slugs = FEATURED_INT.get(country) or (FEATURED_FR if country == "FR" else None)
-        if slugs:
-            return supabase_select(
-                "cities?select=id,name,slug,latitude,longitude,country_code&is_active=eq.true&slug=in.("
-                + ",".join(slugs)
-                + ")&limit=12"
-            )
-        return []
+        rows = featured_city_rows(country)[:12]
+        _store_city_search(cache_key, rows)
+        return rows
     safe = "".join(ch if ch not in ",()*%" else " " for ch in term)[:40].strip()
+    if not safe:
+        return []
     if len(safe) <= 2:
         pattern = urllib.parse.quote(safe + "*")
     else:
         pattern = urllib.parse.quote("*" + safe + "*")
-    featured = FEATURED_INT.get(country) or (FEATURED_FR if country == "FR" else ())
-    term_l = _fold_query(term)
-    pinned = []
-    if featured:
-        pinned = supabase_select(
-            "cities?select=id,name,slug,latitude,longitude,country_code&is_active=eq.true&slug=in.("
-            + ",".join(featured)
-            + ")"
-            + zone
-            + "&limit=20"
-        )
-        pinned = [
-            row
-            for row in pinned
-            if _fold_query(row.get("name") or "").startswith(term_l)
-            or _fold_query(row.get("slug") or "").startswith(term_l)
-        ]
+    pinned = [
+        row
+        for row in featured_city_rows(country)
+        if _fold_query(row.get("name") or "").startswith(term_l)
+        or _fold_query(row.get("slug") or "").startswith(term_l)
+    ]
     local = supabase_select(
         "cities?select=id,name,slug,latitude,longitude,country_code&is_active=eq.true&or=(name.ilike."
         + pattern
@@ -745,7 +814,7 @@ def search_cities(q, country=""):
         + pattern
         + ")"
         + zone
-        + "&order=name.asc&limit=80"
+        + "&order=name.asc&limit=40"
     )
     featured_ids = {row.get("id") for row in pinned}
     seen = set(featured_ids)
@@ -755,18 +824,17 @@ def search_cities(q, country=""):
             continue
         merged.append(row)
         seen.add(row.get("id"))
-    if term:
-        term_l = _fold_query(term)
-        merged.sort(key=lambda row: (
-            0 if row.get("id") in featured_ids else 1,
-            0 if _fold_query(row.get("name") or "") == term_l else 1,
-            0 if _fold_query(row.get("name") or "").startswith(term_l) else 1,
-            0 if "(" not in (row.get("name") or "") else 1,
-            len(row.get("name") or ""),
-            row.get("name") or "",
-        ))
+    merged.sort(key=lambda row: (
+        0 if row.get("id") in featured_ids else 1,
+        0 if _fold_query(row.get("name") or "") == term_l else 1,
+        0 if _fold_query(row.get("name") or "").startswith(term_l) else 1,
+        0 if "(" not in (row.get("name") or "") else 1,
+        len(row.get("name") or ""),
+        row.get("name") or "",
+    ))
     local = merged[:12]
     if country == "FR" or country in FEATURED_INT or len(term) <= 2:
+        _store_city_search(cache_key, local)
         return local
     extra = nominatim_cities(term, country)
     seen = {(row.get("name") or "").lower() for row in local}
@@ -778,12 +846,11 @@ def search_cities(q, country=""):
         seen.add(key)
         if len(local) >= 8:
             break
-    if term:
-        term_l = _fold_query(term)
-        local.sort(key=lambda row: (
-            0 if _fold_query(row.get("name") or "").startswith(term_l) else 1,
-            row.get("name") or "",
-        ))
+    local.sort(key=lambda row: (
+        0 if _fold_query(row.get("name") or "").startswith(term_l) else 1,
+        row.get("name") or "",
+    ))
+    _store_city_search(cache_key, local)
     return local
 
 
@@ -2569,11 +2636,12 @@ class Handler(SimpleHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8") or "{}")
 
-    def send_json(self, payload, status=200):
+    def send_json(self, payload, status=200, cache="no-store"):
         data = json.dumps(unescape_payload(payload), ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", cache)
         self.send_header("Permissions-Policy", "geolocation=(self)")
         self.end_headers()
         self.wfile.write(data)
@@ -2606,6 +2674,8 @@ class Handler(SimpleHTTPRequestHandler):
                 payload = nearest_city_row((qs.get("lat") or [""])[0], (qs.get("lon") or [""])[0]) or {}
             elif path == "/api/cities":
                 payload = search_cities((qs.get("q") or [""])[0], (qs.get("country") or [""])[0])
+                self.send_json(payload, 200, "public, max-age=120")
+                return
             elif path == "/api/countries":
                 payload = search_countries((qs.get("q") or [""])[0])
             elif path == "/api/geo":
@@ -2641,7 +2711,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/place-story":
                 payload = place_story(qs)
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 95}
+                payload = {"ok": True, "app": "sinki", "v": 96}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
@@ -2840,6 +2910,12 @@ def main():
     if not os.environ.get("SUPABASE_URL") or not os.environ.get("SUPABASE_SERVICE_ROLE"):
         raise SystemExit("SUPABASE_URL et SUPABASE_SERVICE_ROLE requis dans .env")
     os.chdir(ROOT)
+    def warm():
+        try:
+            featured_city_rows("FR")
+        except Exception:
+            pass
+    threading.Thread(target=warm, daemon=True).start()
     host = os.environ.get("HOST", "0.0.0.0")
     server = ThreadingHTTPServer((host, PORT), Handler)
     print("Sinki → http://%s:%s" % (host, PORT), flush=True)

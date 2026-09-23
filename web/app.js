@@ -545,6 +545,62 @@ function pickExactCity(typed, rows) {
   if (!q || !Array.isArray(rows)) return null;
   return rows.find((c) => foldName(c.name) === q) || null;
 }
+const citySuggestCache = new Map();
+const cityFeatured = {};
+function cityCacheKey(cc, q) {
+  return String(cc || "") + "|" + foldName(q);
+}
+function filterCityRows(rows, typed) {
+  const q = foldName(typed);
+  if (!q || !Array.isArray(rows) || !rows.length) return [];
+  const seen = new Set();
+  const out = [];
+  for (const c of rows) {
+    const name = foldName(c.name);
+    const slug = foldName(c.slug);
+    const hit = name.startsWith(q) || slug.startsWith(q) || (q.length > 2 && (name.includes(q) || slug.includes(q)));
+    const id = c.id || c.slug || c.name;
+    if (!hit || seen.has(id)) continue;
+    seen.add(id);
+    out.push(c);
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+function localCityHits(cc, typed) {
+  const q = foldName(typed);
+  if (!cc || !q) return [];
+  const exact = citySuggestCache.get(cityCacheKey(cc, q));
+  if (exact && exact.length) return exact;
+  const pool = [];
+  if (cityFeatured[cc]) pool.push(...cityFeatured[cc]);
+  for (let i = q.length; i >= 1; i--) {
+    const hit = citySuggestCache.get(cityCacheKey(cc, q.slice(0, i)));
+    if (hit && hit.length) {
+      pool.push(...hit);
+      break;
+    }
+  }
+  return filterCityRows(pool, typed);
+}
+function rememberCityHits(cc, typed, rows) {
+  if (!cc || !Array.isArray(rows)) return;
+  citySuggestCache.set(cityCacheKey(cc, typed), rows);
+  if (!String(typed || "").trim() && rows.length) cityFeatured[cc] = rows;
+}
+function prefetchFeaturedCities() {
+  const cc = countryParam();
+  if (!cc || cityFeatured[cc]) return;
+  fetch("/api/cities?country=" + encodeURIComponent(cc) + "&q=")
+    .then((r) => r.json())
+    .then((rows) => {
+      if (Array.isArray(rows) && rows.length) {
+        cityFeatured[cc] = rows;
+        rememberCityHits(cc, "", rows);
+      }
+    })
+    .catch(() => {});
+}
 function syncCityContinue() {
   const go = document.querySelector('[data-act="to2"]');
   if (go) go.disabled = !state.city;
@@ -2116,7 +2172,7 @@ function bind() {
       return;
     }
     if (act === "home") { state.screen = "home"; render(); return; }
-    if (act === "start") { state.screen = "search"; state.step = 1; render(); return; }
+    if (act === "start") { state.screen = "search"; state.step = 1; prefetchFeaturedCities(); render(); return; }
     if (act === "area-home") {
       applyHomeArea();
       state.countryQuery = "";
@@ -2513,10 +2569,20 @@ function bind() {
 
   const cityq = $("#cityq");
   if (cityq) {
+    prefetchFeaturedCities();
     cityq.oninput = () => {
       state.query = cityq.value;
       state.city = null;
       clearTimeout(searchTimer);
+      const typedNow = cityq.value;
+      const ccNow = countryParam();
+      const instant = localCityHits(ccNow, typedNow.trim());
+      if (instant.length) {
+        state.suggestions = instant;
+        state.city = pickExactCity(typedNow, instant);
+        paintLiveSearch();
+        syncCityContinue();
+      }
       searchTimer = setTimeout(async () => {
         if (state.query.trim().length < 1) {
           state.suggestions = [];
@@ -2537,11 +2603,12 @@ function bind() {
           rows = [];
         }
         if ($("#cityq") && $("#cityq").value !== typed) return;
+        rememberCityHits(cc, typed.trim(), rows);
         state.suggestions = rows;
         state.city = pickExactCity(typed, rows);
         paintLiveSearch();
         syncCityContinue();
-      }, 180);
+      }, 60);
     };
   }
   const langq = $("#langq");
