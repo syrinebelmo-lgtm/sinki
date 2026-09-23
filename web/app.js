@@ -2499,7 +2499,8 @@ function bind() {
         if (!cc) { state.suggestions = []; paintLiveSearch(); return; }
         const r = await fetch("/api/cities?country=" + encodeURIComponent(cc) + "&q=" + encodeURIComponent(typed.trim()));
         if ($("#cityq") && $("#cityq").value !== typed) return;
-        state.suggestions = await r.json();
+        const rows = await r.json();
+        state.suggestions = Array.isArray(rows) ? rows : [];
         if ($("#cityq") && $("#cityq").value !== typed) return;
         paintLiveSearch();
       }, 180);
@@ -2600,7 +2601,8 @@ async function loadAreaCities() {
     return;
   }
   const r = await fetch("/api/cities?country=" + encodeURIComponent(cc) + "&q=");
-  state.suggestions = await r.json();
+  const rows = await r.json();
+  state.suggestions = Array.isArray(rows) ? rows : [];
   render();
 }
 

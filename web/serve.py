@@ -47,6 +47,14 @@ def load_env():
             os.environ.setdefault(key.strip(), val.strip())
 
 
+def scrub_env():
+    for name in ("SUPABASE_SERVICE_ROLE", "SUPABASE_URL", "RESEND_API_KEY"):
+        raw = os.environ.get(name) or ""
+        token = raw.strip().split()[0] if raw.strip() else ""
+        if token:
+            os.environ[name] = token
+
+
 UNI_ESC = re.compile(r"\\u([0-9a-fA-F]{4})", re.I)
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 AVATAR_FILE_RE = re.compile(
@@ -2630,7 +2638,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/place-story":
                 payload = place_story(qs)
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 92}
+                payload = {"ok": True, "app": "sinki", "v": 93}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
@@ -2825,6 +2833,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 def main():
     load_env()
+    scrub_env()
     if not os.environ.get("SUPABASE_URL") or not os.environ.get("SUPABASE_SERVICE_ROLE"):
         raise SystemExit("SUPABASE_URL et SUPABASE_SERVICE_ROLE requis dans .env")
     os.chdir(ROOT)
