@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""QR flyer → page de téléchargement Sinki."""
+"""QR flyer → page d’install statique (GitHub Pages)."""
 
 import os
 import sys
 
-URL = "https://sinki.onrender.com/download"
+URL = "https://syrinebelmo-lgtm.github.io/sinki/download"
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
 
 

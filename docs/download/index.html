@@ -6,10 +6,7 @@
     <meta name="theme-color" content="#243D2E" />
     <title>Télécharger Sinki</title>
     <meta name="description" content="Ouvre Sinki maintenant. Le même QR ouvrira l’App Store ou Google Play dès que l’app y sera." />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/biche-sinki.png" />
-    <link rel="manifest" href="/public/manifest.webmanifest" />
-    <noscript><meta http-equiv="refresh" content="0;url=/" /></noscript>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <style>
       :root {
         --cream: #f4efe6;
@@ -29,7 +26,7 @@
         color: var(--ink);
       }
       .dl-wrap { max-width: 420px; margin: 0 auto; padding: 28px 20px 48px; text-align: center; }
-      .dl-deer { width: 120px; height: 120px; object-fit: contain; margin: 8px auto 12px; display: block; }
+      .dl-deer { width: 72px; height: 72px; margin: 8px auto 12px; display: block; }
       .dl-wrap h1 { font-size: 1.7rem; margin: 0 0 8px; color: var(--forest); }
       .dl-wrap p { color: var(--muted); margin: 0 0 16px; line-height: 1.45; }
       .dl-actions { display: grid; gap: 10px; margin: 18px 0 8px; }
@@ -55,23 +52,27 @@
   </head>
   <body>
     <div class="dl-wrap">
-      <img class="dl-deer" src="/biche-sinki.png" alt="Sinki" />
+      <svg class="dl-deer" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <rect width="32" height="32" rx="10" fill="#243D2E"/>
+        <path d="M16 7c2.2 3.2 4.6 4.2 7 4.2-.8 2.4-2.6 4-4.6 4.6 1.8.6 3.2 2.2 3.6 4.2-2.4.2-4.6-.8-6-2.6-1.4 1.8-3.6 2.8-6 2.6.4-2 1.8-3.6 3.6-4.2-2-.6-3.8-2.2-4.6-4.6C11.4 11.2 13.8 10.2 16 7Z" fill="#E8D5B5"/>
+        <circle cx="13.6" cy="14.2" r="1.1" fill="#243D2E"/>
+        <circle cx="18.4" cy="14.2" r="1.1" fill="#243D2E"/>
+      </svg>
       <h1>Télécharger Sinki</h1>
-      <p id="dlLead">Le même QR ouvrira l’App Store ou Google Play dès que l’app y sera. En attendant, ouvre Sinki maintenant.</p>
+      <p id="dlLead">Le même QR ouvrira l’App Store ou Google Play dès que l’app y sera. En attendant, ouvre Sinki maintenant ou installe-la depuis le navigateur.</p>
       <div class="dl-actions">
         <a class="btn" id="btnIos" aria-disabled="true">App Store</a>
         <a class="btn secondary" id="btnPlay" aria-disabled="true">Google Play</a>
-        <a class="btn outline" id="btnWeb" href="/">Ouvrir Sinki maintenant</a>
+        <a class="btn outline" id="btnWeb" href="https://sinki.onrender.com" rel="noopener">Ouvrir / installer Sinki</a>
       </div>
       <p class="dl-soon" id="dlSoon"></p>
-      <p class="dl-hint" id="dlHint">Pour activer les stores plus tard, coller les URLs https dans web/stores.json et docs/download/stores.json (ios / android), ou les variables APP_STORE_URL / PLAY_STORE_URL. Ne pas inventer d’identifiants de fiche.</p>
+      <p class="dl-hint" id="dlHint">Pour activer les stores plus tard, coller les URLs https dans stores.json (ios / android). Ne pas inventer d’identifiants de fiche.</p>
     </div>
     <script>
       (function () {
         const ua = navigator.userAgent || "";
         const ios = /iPhone|iPad|iPod/i.test(ua);
         const android = /Android/i.test(ua);
-        const mobile = ios || android || /Mobile|Mobi/i.test(ua);
         const btnIos = document.getElementById("btnIos");
         const btnPlay = document.getElementById("btnPlay");
         const soon = document.getElementById("dlSoon");
@@ -85,6 +86,7 @@
           if (url) {
             btn.href = url;
             btn.removeAttribute("aria-disabled");
+            btn.rel = "noopener";
           } else {
             btn.removeAttribute("href");
             btn.setAttribute("aria-disabled", "true");
@@ -104,35 +106,15 @@
             location.replace(playUrl);
             return;
           }
-          if (mobile && !iosUrl && !playUrl) {
-            location.replace("/");
-            return;
-          }
-          if (mobile) {
-            location.replace("/");
-            return;
-          }
           if (!iosUrl && !playUrl) {
-            soon.textContent = "App Store et Google Play arrivent. En attendant, ouvre Sinki dans le navigateur.";
+            soon.textContent = "L’app n’est pas encore sur l’App Store ni Google Play. Ouvre Sinki dans le navigateur, puis « Ajouter à l’écran d’accueil » pour l’installer.";
           }
         }
 
-        const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
-        const timer = setTimeout(function () {
-          if (ctrl) ctrl.abort();
-          apply({});
-        }, 3000);
-
-        fetch("/api/stores", ctrl ? { signal: ctrl.signal } : undefined)
-          .then(function (r) { return r.json(); })
-          .then(function (data) {
-            clearTimeout(timer);
-            apply(data || {});
-          })
-          .catch(function () {
-            clearTimeout(timer);
-            apply({});
-          });
+        fetch("stores.json", { cache: "no-store" })
+          .then(function (r) { return r.ok ? r.json() : {}; })
+          .then(function (data) { apply(data || {}); })
+          .catch(function () { apply({}); });
       })();
     </script>
   </body>
