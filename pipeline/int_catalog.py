@@ -64,7 +64,10 @@ SKIP_ADMIN = re.compile(
 )
 TARGET = 100
 TARGET_INT = 30
-MAX_NEAR_KM = 90
+# Nearby clones keep source GPS and only change city_id. 90 km (and the
+# old 320 km INT_OSM exception) produced the same far-from-city junk as
+# fill_empty's 250 km fallback. New clones stay within ~20 km.
+MAX_NEAR_KM = 20
 
 IT_RINGS = [
     [
@@ -2005,7 +2008,7 @@ def fill_quota(url, service_role, cc):
             dlat = (city["latitude"] - src["latitude"]) * 111.0
             dlon = (city["longitude"] - src["longitude"]) * 85.0
             dist = (dlat * dlat + dlon * dlon) ** 0.5
-            if dist > (320 if cc in INT_OSM else MAX_NEAR_KM):
+            if dist > MAX_NEAR_KM:
                 continue
             scored.append((0 if has_usable_photo(src.get("photo_url")) else 1, dist, src))
         scored.sort(key=lambda x: (x[0], x[1]))

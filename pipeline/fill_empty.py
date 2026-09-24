@@ -14,7 +14,11 @@ from .run import load_env
 from .supabase_io import fetch_all, fetch_city_indexes, to_outing_row, upsert_outings
 
 NEARBY_PER_CITY = 2
-MAX_NEAR_KM = 80
+# Clones keep the original GPS but change city_id. The old 80 km search
+# plus 250 km fallback attached outings a whole department away (audit:
+# ~38% of a 320-outing sample >50 km, mostly source_name=nearby). New
+# clones stay within a short drive; empty beats a 200 km "nearby".
+MAX_NEAR_KM = 20
 MAX_GPS_KM = 12
 
 
@@ -139,14 +143,12 @@ def main():
         near = nearest_cities(
             city["latitude"], city["longitude"], outing_grid, ocell, limit=12, max_km=MAX_NEAR_KM
         )
-        if not near:
-            near = nearest_cities(
-                city["latitude"], city["longitude"], outing_grid, ocell, limit=4, max_km=250
-            )
         near.sort(key=lambda x: (_photo_rank(x[1]["row"]), x[0]))
         picked = []
         seen_names = set()
         for dist, holder in near:
+            if dist > MAX_NEAR_KM:
+                continue
             src = holder["row"]
             name = (src.get("name") or "").strip().lower()
             if name in seen_names:

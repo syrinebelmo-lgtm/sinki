@@ -13,6 +13,10 @@ from .supabase_io import fetch_all, to_outing_row, upsert_outings
 
 NEARBY_PER_CITY = 2
 LOCAL_GPS_KM = 60
+# Same cap as fill_empty: leftover nearby clones must stay near the
+# empty commune. Ranking every priced outing without a max used to pin
+# DOM-TOM / island towns to places hundreds of km away.
+MAX_NEAR_KM = 20
 
 
 def _load_jsonl(path):
@@ -96,6 +100,8 @@ def main():
         ranked = []
         for src in priced_existing:
             dist = haversine_km(city["latitude"], city["longitude"], src["latitude"], src["longitude"])
+            if dist > MAX_NEAR_KM:
+                continue
             ranked.append(((_photo_rank(src), dist), src))
         ranked.sort(key=lambda x: x[0])
         picked = 0
