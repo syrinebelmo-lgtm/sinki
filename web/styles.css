@@ -208,7 +208,7 @@ input[type="range"] { width: 100%; accent-color: var(--forest); }
   overflow-wrap: anywhere;
   line-height: 1.4;
 }
-.linkish { display: block; width: 100%; text-align: left; margin-top: 10px; background: none; border: 0; color: var(--forest); font-weight: 600; }
+.linkish { display: block; width: 100%; text-align: left; margin-top: 10px; background: none; border: 0; color: var(--forest); font-weight: 600; text-decoration: none; cursor: pointer; }
 .route-box {
   background: #fff;
   border: 1.5px solid var(--line);

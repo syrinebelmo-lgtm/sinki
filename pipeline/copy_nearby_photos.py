@@ -81,20 +81,36 @@ def orig_source_id(sid):
 
 
 def main():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--city-id", help="Un id ou une liste (ex. 1,2)")
+    parser.add_argument("--limit", type=int, default=0)
+    args = parser.parse_args()
+
     load_env(".env")
     url = os.environ.get("SUPABASE_URL")
     service_role = os.environ.get("SUPABASE_SERVICE_ROLE")
     if not url or not service_role:
         raise SystemExit("SUPABASE_URL et SUPABASE_SERVICE_ROLE requis")
 
+    extra = "&source_name=eq.nearby"
+    city_ids = [part.strip() for part in str(args.city_id or "").split(",") if part.strip()]
+    if len(city_ids) == 1:
+        extra += "&city_id=eq." + city_ids[0]
+    elif city_ids:
+        extra += "&city_id=in.(" + ",".join(city_ids) + ")"
+
     nearby = fetch_all(
         url,
         service_role,
         "outings",
         "id,name,source_id,photo_url",
-        extra="&source_name=eq.nearby",
+        extra=extra,
     )
     missing = [r for r in nearby if not has_usable_photo(r.get("photo_url"))]
+    if args.limit:
+        missing = missing[: args.limit]
     print("nearby sans photo", len(missing), "/", len(nearby), flush=True)
 
     orig_ids = []

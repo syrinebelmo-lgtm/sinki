@@ -51,7 +51,15 @@ RANDO_RE = re.compile(
     re.I,
 )
 NIGHT_RE = re.compile(
-    r"\b(bo[iî]te de nuit|nightclub|discoth[eè]que|concert|op[eé]ra|cin[eé]ma|th[eé][aâ]tre)\b",
+    r"\b(bo[iî]te de nuit|nightclub|discoth[eè]que|karaoke|karaok[eé])\b",
+    re.I,
+)
+SHOW_RE = re.compile(
+    r"\b(concert|op[eé]ra|ballet|cin[eé]ma|cinema|th[eé][aâ]tre|theatre|cabaret|jazz)\b",
+    re.I,
+)
+SHOW_BUT_DRINK = re.compile(
+    r"\b(bar|pub|caf[eé]|comptoir|brasserie|c[aà]\s*ph[eê]|coffee)\b",
     re.I,
 )
 SKIP_PARK = re.compile(r"\b(parking|parc auto|parc relais|acrobatique|accrobranche|aventure)\b", re.I)
@@ -105,6 +113,9 @@ def suggest(row):
         return None, None
     if MUSEUM_RE.search(name) and cat not in (CAT_CULT, CAT_SHOP):
         return CAT_CULT, "museum_name"
+    if SHOW_RE.search(name) and cat not in (CAT_CULT, CAT_SHOP) and "musée" not in folded:
+        if not NIGHT_RE.search(name) and not SHOW_BUT_DRINK.search(name):
+            return CAT_CULT, "show_name"
     if NIGHT_RE.search(name) and cat not in (CAT_SOIREE, CAT_CULT) and "musée" not in folded:
         return CAT_SOIREE, "night_name"
     if (
@@ -142,12 +153,28 @@ def patch_chunk(url, service_role, ids, body):
         time.sleep(0.05)
 
 
+def recategorize_world(url, service_role):
+    from .france_nightlife import recategorize_world as move_shows
+
+    return move_shows(url, service_role)
+
+
 def main():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--world", action="store_true", help="Recatégorise concerts / ciné / écoles de danse partout")
+    args = parser.parse_args()
+
     load_env(".env")
     url = os.environ.get("SUPABASE_URL")
-    service_role = os.environ.get("SUPABASE_SERVICE_ROLE")
+    service_role = (os.environ.get("SUPABASE_SERVICE_ROLE") or "").strip().split()[0]
     if not url or not service_role:
         raise SystemExit("SUPABASE_URL et SUPABASE_SERVICE_ROLE requis")
+    if args.world:
+        moved = recategorize_world(url, service_role)
+        print("terminé recategorize world", moved, flush=True)
+        return
 
     rows = fetch_all(
         url,
@@ -188,7 +215,7 @@ def main():
         elif re.search(r"\b(match |arena|stade)\b", name, re.I):
             dst = CAT_SOIREE
         elif re.search(r"\bth[eé][aâ]tre\b", name, re.I):
-            dst = CAT_SOIREE
+            dst = CAT_CULT
         else:
             dst = CAT_LOISIR
         if dst != CAT_SHOP:

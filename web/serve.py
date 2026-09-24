@@ -109,8 +109,27 @@ NIGHT_CLUB = re.compile(
     re.I,
 )
 CULTURE_SHOW = re.compile(
-    r"\b(concert|cabaret|jazz|op[eé]ra|ballet|th[eé][aâ]tre|theatre|"
-    r"philharmonie|spectacle|moulin rouge|paradis latin|new morning)\b",
+    r"\b(concerts?|cabaret|jazz|op[eé]ra|ballet|th[eé][aâ]tre|theatre|theater|"
+    r"philharmonie|spectacle|moulin rouge|paradis latin|new morning|"
+    r"cin[eé]ma|cinema)\b",
+    re.I,
+)
+DANCE_SCHOOL = re.compile(
+    r"(?:[eé]cole|ecole|studio|acad[eé]mie|institut|conservatoire|cfa|centre)\b.{0,40}\bdanse\b|"
+    r"\bdanse\b.{0,24}\b(?:[eé]cole|studio|acad[eé]mie)\b|"
+    r"dance\s+(?:school|academy|studio)|"
+    r"studio\s+nilanthi|\bnilanthi\b|"
+    r"\bmilonga\b|"
+    r"cours de danse|"
+    r"espace\s+(?:de\s+)?danse|atelier\s+chor[eé]graphique|\bchor[eé]graphique\b",
+    re.I,
+)
+DANCE_SCHOOL_HINT = re.compile(
+    r"\b(studio|[eé]cole|ecole|acad[eé]mie|institut|conservatoire|cfa|school|danse|dance)\b",
+    re.I,
+)
+SHOW_BUT_DRINK = re.compile(
+    r"\b(bar|pub|caf[eé]|comptoir|brasserie|c[aà]\s*ph[eê]|coffee)\b",
     re.I,
 )
 NIGHT_DROP = re.compile(
@@ -123,8 +142,9 @@ NIGHT_DROP = re.compile(
     r"poney\s*club|centre [eé]questre|balade|"
     r"visite en famille|\ben famille\b|petit train|"
     r"galerie|vestiaire|mode en majest|haute couture|"
-    r"concert|cabaret|jazz|th[eé][aâ]tre|theatre|philharmonie|spectacle|"
-    r"conservatoire|école de danse|ecole de danse|studio de danse|centre .{0,24}danse)\b",
+    r"concerts?|cabaret|jazz|th[eé][aâ]tre|theatre|theater|philharmonie|spectacle|"
+    r"conservatoire|[eé]cole de danse|ecole de danse|studio de danse|centre .{0,24}danse|"
+    r"dance school|acad[eé]mie de danse|milonga)\b",
     re.I,
 )
 TO_EUR = {
@@ -244,6 +264,28 @@ LODGING_NAME = re.compile(
     r"\b(campanile|ibis|novotel|mercure|kyriad|premiere classe|premi[eè]re classe|ibis budget|ibis styles|hostel|auberge de jeunesse|best western|holiday inn)\b",
     re.I,
 )
+# keep_row only: chain list above misses generic "Hotel X" / "Hôtel Y".
+LODGING_GENERIC = re.compile(r"\b(h[oô]tel|hotel|motel|hostel)\b", re.I)
+LODGING_KEEP = re.compile(
+    r"\b(h[oô]tel|hotel)[\s-]*(de[\s-]*ville|dieu)\b",
+    re.I,
+)
+# is_nightlife lets dance schools through via description "Dancing." / NIGHT_KEEP.
+SOIREE_DROP = re.compile(
+    r"\b("
+    r"jeune public|enfance|enfant|enfants|kids|children|young spectator|"
+    r"scolaire|maternelle|petite enfance|tout[-\s]?petits?|"
+    r"cin[eé]ma|cinema|"
+    r"op[eé]ra|ballet|"
+    r"acad[eé]mie de danse|[eé]cole de danse|studio de danse|"
+    r"cfa danse|conservatoire|institut.{0,40}danse|centre chor[eé]graph\w*|atelier chor[eé]graph"
+    r")\b",
+    re.I,
+)
+DANCE_SCHOOL_NAME = re.compile(
+    r"\b(studio|acad[eé]mie|institut|conservatoire|cfa|[eé]cole|danse|dance)\b",
+    re.I,
+)
 
 
 def outing_name_key(name):
@@ -359,28 +401,55 @@ def outing_blob(row):
     )
 
 
+def is_dance_school(row):
+    name = row.get("name") or ""
+    desc = (row.get("description") or "").strip()
+    if DANCE_SCHOOL.search(name):
+        return True
+    if not desc.startswith("Dancing."):
+        return False
+    if NIGHT_CLUB.search(name) or re.search(r"\b(nightclub|disco|night)\b", name, re.I):
+        return False
+    if DANCE_SCHOOL_HINT.search(name) or re.search(r"danse|dance", name, re.I):
+        return True
+    return False
+
+
 def is_culture_show(row):
     name = row.get("name") or ""
     blob = outing_blob(row)
     if NIGHT_CLUB.search(name):
         return False
-    return bool(CULTURE_SHOW.search(blob))
+    if is_dance_school(row):
+        return True
+    if not CULTURE_SHOW.search(blob):
+        return False
+    if SHOW_BUT_DRINK.search(name) and not re.search(r"\b(spectacle|concert|ballet)\b", name, re.I):
+        return False
+    return True
 
 
 def is_nightlife(row):
     if (row.get("category") or "") in (CAT_SHOP, CAT_WALK, CAT_HIKE, CAT_CULT):
         return False
+    name = row.get("name") or ""
+    if (row.get("category") or "") == CAT_RESTO and not NIGHT_CLUB.search(name):
+        return False
+    if is_dance_school(row):
+        return False
     if is_culture_show(row):
         return False
-    name = row.get("name") or ""
     blob = outing_blob(row)
     if NIGHT_DROP.search(blob) and not NIGHT_KEEP.search(name) and not NIGHT_CLUB.search(name):
-        return False
+        if not (SHOW_BUT_DRINK.search(name) and not re.search(r"\b(spectacle|concert|ballet)\b", name, re.I)):
+            return False
     if NIGHT_KEEP.search(name) or NIGHT_NAME.search(name) or NIGHT_CLUB.search(name):
         return True
     desc = (row.get("description") or "").strip()
     if (row.get("category") or "") == CAT_NIGHT and (row.get("kind") or "") == "place":
-        if desc.startswith(("Boîte de nuit", "Bar.", "Pub.", "Karaoké", "Dancing.", "Guinguette")):
+        if desc.startswith(("Boîte de nuit", "Bar.", "Pub.", "Karaoké", "Guinguette")):
+            return True
+        if desc.startswith("Dancing.") and not is_dance_school(row):
             return True
     if (row.get("category") or "") == CAT_NIGHT and NIGHT_KEEP.search(blob) and not NIGHT_DROP.search(blob):
         return True
@@ -388,6 +457,7 @@ def is_nightlife(row):
 
 
 def nightlife_rank(row):
+    photo = 0 if has_usable_photo(row.get("photo_url")) else 1
     name = row.get("name") or ""
     desc = row.get("description") or ""
     if re.search(r"karaoke|karaok[eé]", name, re.I):
@@ -398,7 +468,7 @@ def nightlife_rank(row):
         club = 2
     else:
         club = 2
-    return (club, outing_rank(row))
+    return (photo, club, outing_rank(row))
 
 
 def _money_pair(row):
@@ -651,10 +721,10 @@ def safe_select(query):
 def supabase_outings(filters, limit, pictured_only=False):
     limit = max(1, min(int(limit or 80), 80))
     base = "outings?select=" + SELECT + "&is_active=eq.true" + filters
-    pictured = safe_select(base + "&photo_url=not.is.null&limit=" + str(limit))
+    pictured = safe_select(base + "&photo_url=like.http*&limit=" + str(limit))
     if pictured_only:
         return pictured
-    rest = safe_select(base + "&limit=" + str(limit))
+    rest = safe_select(base + "&photo_url=is.null&limit=" + str(limit))
     return pictured + rest
 
 
@@ -1183,6 +1253,8 @@ def fetch_outings(params):
             out_rows.append(row)
         return out_rows
 
+    orig_typ = typ
+
     def keep_row(row, beyond):
         if row.get("latitude") is None or row.get("longitude") is None:
             return False
@@ -1219,8 +1291,14 @@ def fetch_outings(params):
                     return False
                 if outside_france_mainland(row["latitude"], row["longitude"]):
                     return False
-        if typ == "soirees":
+        if typ == "soirees" or orig_typ == "soirees":
             if not is_nightlife(row):
+                return False
+            soiree_name = row.get("name") or ""
+            soiree_desc = (row.get("description") or "").strip()
+            if SOIREE_DROP.search(soiree_name) or SOIREE_DROP.search(soiree_desc):
+                return False
+            if soiree_desc == "Dancing." and DANCE_SCHOOL_NAME.search(soiree_name):
                 return False
         if typ == "culture":
             if is_nightlife(row):
@@ -1233,7 +1311,10 @@ def fetch_outings(params):
             return False
         if indoor == "out" and row.get("indoor") is True:
             return False
-        if LODGING_NAME.search(row.get("name") or ""):
+        lodging_name = row.get("name") or ""
+        if LODGING_NAME.search(lodging_name):
+            return False
+        if LODGING_GENERIC.search(lodging_name) and not LODGING_KEEP.search(lodging_name):
             return False
         if (cat == "Shopping" or typ == "shopping") and is_grocery_shop(row.get("name")):
             return False
@@ -2848,7 +2929,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 100}
+                payload = {"ok": True, "app": "sinki", "v": 102}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":

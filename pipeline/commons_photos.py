@@ -442,9 +442,16 @@ def commons_search_photo(name, cache, mode="place"):
             '"%s" (shop OR store OR magasin OR winkel OR filiale)' % name.strip(),
             name.strip(),
         ]
+    elif mode == "night":
+        queries = [
+            '"%s" (nightclub OR discotheque OR disco OR club OR concert OR venue OR bar)'
+            % name.strip(),
+            name.strip(),
+        ]
     elif mode == "int":
         queries = [
-            '"%s" (museum OR cinema OR restaurant OR park OR church OR castle OR gallery OR tower)' % name.strip(),
+            '"%s" (museum OR cinema OR restaurant OR park OR church OR castle OR gallery OR tower OR nightclub OR concert OR bar OR club OR venue)'
+            % name.strip(),
             name.strip(),
         ]
     else:
@@ -552,7 +559,7 @@ def licensed_photo(name, lat, lon, tags=None, cache=None, allow_geo_backup=True,
     hit = file_if_free(filename, cache) if filename else None
     if not hit and tags.get("wikidata"):
         hit = wikidata_entity_photo(
-            tags.get("wikidata"), lat, lon, cache, any_country=(mode in ("shop", "int"))
+            tags.get("wikidata"), lat, lon, cache, any_country=(mode in ("shop", "int", "night"))
         )
     if not hit and tags.get("wikipedia"):
         hit = wikipedia_photo(tags.get("wikipedia"), lat, lon, cache)
@@ -565,7 +572,8 @@ def licensed_photo(name, lat, lon, tags=None, cache=None, allow_geo_backup=True,
     if not hit:
         hit = commons_search_photo(name, cache, mode=mode)
     if not hit:
-        hit = commons_geo_photo(lat, lon, name, cache, allow_backup=allow_geo_backup)
+        geo_backup = allow_geo_backup and mode not in ("shop", "night")
+        hit = commons_geo_photo(lat, lon, name, cache, allow_backup=geo_backup)
     if not hit:
         return None, None
     return hit["url"], hit["license"]

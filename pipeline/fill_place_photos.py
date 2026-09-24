@@ -18,23 +18,32 @@ EVENT_RE = re.compile(
 )
 
 
-BIG_CITIES = {1, 2, 3, 4, 5, 6}  # Lyon, Paris, Marseille, Bordeaux, Lille, Toulouse
+BIG_CITIES = {
+    1, 2, 3, 4, 5, 6,  # Lyon, Paris, Marseille, Bordeaux, Lille, Toulouse
+    38436, 38477, 60688, 71526, 93674, 107931, 121530, 135880, 145142,
+    # Genève, Bruxelles, Berlin, Barcelone, Rome, Amsterdam, New York, Londres, Tokyo
+}
+CAT_NIGHT = "Soirées et concerts"
+
+
+def _city_ids(raw):
+    return [part.strip() for part in str(raw or "").split(",") if part.strip()]
 
 
 def _prio(row):
-    """France entière : grandes villes + lieux réels d’abord, toutes catégories."""
+    """Soirées + villes populaires d’abord, puis le reste (sans inventer de photos)."""
     event = 1 if EVENT_RE.search(row.get("name") or "") else 0
-    if row.get("photo_mode") == "int":
-        cat = row.get("category") or ""
-        if "Musée" in cat or "Randonn" in cat:
-            cat_n = 0
-        elif "Restaurant" in cat or "Soirée" in cat:
-            cat_n = 1
-        elif "balade" in cat.lower() or "Balade" in cat:
-            cat_n = 2
-        else:
-            cat_n = 3
-        return (cat_n, event)
+    cat = row.get("category") or ""
+    if cat == CAT_NIGHT:
+        cat_n = 0
+    elif "Musée" in cat or "Randonn" in cat:
+        cat_n = 1
+    elif "Restaurant" in cat:
+        cat_n = 2
+    elif "balade" in cat.lower() or "Balade" in cat:
+        cat_n = 3
+    else:
+        cat_n = 4
     try:
         cid = int(row.get("city_id") or 0)
     except (TypeError, ValueError):
@@ -42,7 +51,16 @@ def _prio(row):
     big = 0 if cid in BIG_CITIES else 1
     src = (row.get("source_name") or "")
     src_n = 0 if src == "official_website" else 1 if src == "osm" else 2
-    return (event, big, src_n)
+    return (cat_n, big, event, src_n)
+
+
+def _mark_photo_mode(rows, force_int=False):
+    for row in rows:
+        cat = row.get("category") or ""
+        if force_int or cat == CAT_NIGHT:
+            row["photo_mode"] = "night" if cat == CAT_NIGHT else "int"
+        elif cat == "Shopping":
+            row["photo_mode"] = "shop"
 
 
 def _run_fill(url, service_role, missing, workers=4, chunk=80):
@@ -95,8 +113,7 @@ def fill_for_country(url, service_role, cc, workers=4, chunk=80, limit=0):
             )
         )
     missing = [r for r in rows if not has_usable_photo(r.get("photo_url"))]
-    for row in missing:
-        row["photo_mode"] = "int"
+    _mark_photo_mode(missing, force_int=True)
     missing.sort(key=_prio)
     if limit:
         missing = missing[:limit]
@@ -106,7 +123,7 @@ def fill_for_country(url, service_role, cc, workers=4, chunk=80, limit=0):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--city-id")
+    parser.add_argument("--city-id", help="Un id ou une liste (ex. 1,2)")
     parser.add_argument("--all", action="store_true", help="Toutes les sorties actives sans photo")
     parser.add_argument("--cc", help="Pays (ex. NL) : OSM sans photo de ce pays")
     parser.add_argument("--category")
@@ -124,8 +141,11 @@ def main():
         raise SystemExit("SUPABASE_URL et SUPABASE_SERVICE_ROLE requis")
 
     extra = "&is_active=eq.true&or=(photo_url.is.null,photo_url.eq.)&source_name=neq.nearby"
-    if args.city_id:
-        extra += "&city_id=eq." + urllib.parse.quote(str(args.city_id))
+    city_ids = _city_ids(args.city_id)
+    if len(city_ids) == 1:
+        extra += "&city_id=eq." + urllib.parse.quote(city_ids[0])
+    elif city_ids:
+        extra += "&city_id=in.(" + ",".join(urllib.parse.quote(i) for i in city_ids) + ")"
     if args.category:
         extra += "&category=eq." + urllib.parse.quote(args.category)
     if args.cc:
@@ -163,12 +183,10 @@ def main():
         for r in rows
         if not has_usable_photo(r.get("photo_url")) and (r.get("source_name") or "") != "nearby"
     ]
+    _mark_photo_mode(missing, force_int=bool(args.cc))
+    missing.sort(key=_prio)
     if args.limit:
         missing = missing[: args.limit]
-    if args.cc:
-        for row in missing:
-            row["photo_mode"] = "int"
-    missing.sort(key=_prio)
     print("à traiter", len(missing), "chargées", len(rows), flush=True)
     _run_fill(url, service_role, missing, workers=args.workers, chunk=args.chunk)
 

@@ -37,7 +37,7 @@ def map_category(types, price_min):
         )
     ):
         return SINKI_CATEGORIES["shopping"]
-    if any(k in blob for k in ("concert", "festival", "showevent", "entertainmentandevent", "theatre", "cinema", "cabaret", "jazz")):
+    if any(k in blob for k in ("concert", "festival", "showevent", "entertainmentandevent", "theatre", "theater", "cinema", "cabaret", "jazz", "opera", "ballet")):
         return SINKI_CATEGORIES["culture"]
     if any(k in blob for k in ("nightclub", "bar", "pub", "barorpub", "karaoke", "dancing")):
         return SINKI_CATEGORIES["soiree"]

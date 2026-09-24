@@ -28,8 +28,23 @@ DANCE_SCHOOL = re.compile(
     re.I,
 )
 CULTURE_SHOW = re.compile(
-    r"\b(concert|cabaret|jazz|op[eé]ra|ballet|th[eé][aâ]tre|theatre|"
-    r"philharmonie|spectacle|moulin rouge|paradis latin|new morning)\b",
+    r"\b(concerts?|cabaret|jazz|op[eé]ra|ballet|th[eé][aâ]tre|theatre|theater|"
+    r"philharmonie|spectacle|moulin rouge|paradis latin|new morning|"
+    r"cin[eé]ma|cinema)\b",
+    re.I,
+)
+SHOW_BUT_DRINK = re.compile(
+    r"\b(bar|pub|caf[eé]|comptoir|brasserie|c[aà]\s*ph[eê]|coffee)\b",
+    re.I,
+)
+DANCE_SCHOOL_MOVE = re.compile(
+    r"(?:[eé]cole|ecole|studio|acad[eé]mie|institut|conservatoire|cfa|centre)\b.{0,40}\bdanse\b|"
+    r"\bdanse\b.{0,24}\b(?:[eé]cole|studio|acad[eé]mie)\b|"
+    r"dance\s+(?:school|academy|studio)|"
+    r"studio\s+nilanthi|\bnilanthi\b|"
+    r"\bmilonga\b|"
+    r"cours de danse|"
+    r"espace\s+(?:de\s+)?danse|atelier\s+chor[eé]graphique|\bchor[eé]graphique\b",
     re.I,
 )
 NIGHT_CLUBISH = re.compile(
@@ -296,11 +311,18 @@ def recategorize_culture_shows(url, service_role):
         "ballet",
         "théâtre",
         "theatre",
+        "theater",
         "moulin rouge",
         "paradis latin",
         "new morning",
         "spectacle",
         "philharmonie",
+        "cinema",
+        "cinéma",
+        "école de danse",
+        "studio de danse",
+        "académie de danse",
+        "milonga",
     )
     seen = set()
     moved = 0
@@ -332,6 +354,7 @@ def recategorize_culture_shows(url, service_role):
             print("culture skip", needle, exc, flush=True)
             continue
         to_move = []
+        samples = []
         for row in rows:
             oid = row.get("id")
             if not oid or oid in seen:
@@ -339,11 +362,20 @@ def recategorize_culture_shows(url, service_role):
             seen.add(oid)
             name = row.get("name") or ""
             blob = name + " " + (row.get("description") or "")
-            if not CULTURE_SHOW.search(blob):
-                continue
             if NIGHT_CLUBISH.search(name):
                 continue
+            if DANCE_SCHOOL_MOVE.search(name):
+                to_move.append(oid)
+                if len(samples) < 6:
+                    samples.append(name)
+                continue
+            if not CULTURE_SHOW.search(blob):
+                continue
+            if SHOW_BUT_DRINK.search(name) and not re.search(r"\b(spectacle|concert|ballet)\b", name, re.I):
+                continue
             to_move.append(oid)
+            if len(samples) < 6:
+                samples.append(name)
         for i in range(0, len(to_move), 40):
             chunk = to_move[i : i + 40]
             ids = ",".join(str(x) for x in chunk)
@@ -362,10 +394,69 @@ def recategorize_culture_shows(url, service_role):
             with urllib.request.urlopen(reqp, timeout=60) as resp:
                 resp.read()
             moved += len(chunk)
-        print("culture needle", needle, "batch", len(rows), "moved", moved, flush=True)
+        print("culture needle", needle, "batch", len(rows), "chunk", len(to_move), "moved", moved, "ex:", samples, flush=True)
         time.sleep(0.2)
+    extra = (
+        "&category=eq."
+        + urllib.parse.quote("Soirées et concerts")
+        + "&description=eq."
+        + urllib.parse.quote("Dancing.")
+        + "&limit=800&offset=0"
+    )
+    q = url.rstrip("/") + "/rest/v1/outings?select=id,name,description,category" + extra
+    req = urllib.request.Request(
+        q,
+        headers={
+            "apikey": service_role,
+            "Authorization": "Bearer " + service_role,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=40) as resp:
+            rows = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        print("culture skip dancing-desc", exc, flush=True)
+        rows = []
+    to_move = []
+    samples = []
+    for row in rows:
+        oid = row.get("id")
+        if not oid or oid in seen:
+            continue
+        name = row.get("name") or ""
+        if NIGHT_CLUBISH.search(name):
+            continue
+        if DANCE_SCHOOL_MOVE.search(name) or DANCE_SCHOOL.search(name):
+            seen.add(oid)
+            to_move.append(oid)
+            if len(samples) < 8:
+                samples.append(name)
+    for i in range(0, len(to_move), 40):
+        chunk = to_move[i : i + 40]
+        ids = ",".join(str(x) for x in chunk)
+        body = json.dumps({"category": "Musées et culture"}).encode("utf-8")
+        reqp = urllib.request.Request(
+            url.rstrip("/") + "/rest/v1/outings?id=in.(" + ids + ")",
+            data=body,
+            headers={
+                "apikey": service_role,
+                "Authorization": "Bearer " + service_role,
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+            },
+            method="PATCH",
+        )
+        with urllib.request.urlopen(reqp, timeout=60) as resp:
+            resp.read()
+        moved += len(chunk)
+    print("culture dancing-desc", len(rows), "chunk", len(to_move), "moved", moved, "ex:", samples, flush=True)
     print("terminé recategorize culture", moved, flush=True)
     return moved
+
+
+def recategorize_world(url, service_role):
+    """Même règles partout : concerts / cabarets / ciné / écoles de danse → culture."""
+    return recategorize_culture_shows(url, service_role)
 
 
 def build_payload(items, cities, require_fr=True):
@@ -416,12 +507,12 @@ def main():
 
     load_env(".env")
     url = os.environ.get("SUPABASE_URL")
-    service_role = os.environ.get("SUPABASE_SERVICE_ROLE")
+    service_role = (os.environ.get("SUPABASE_SERVICE_ROLE") or "").strip().split()[0]
     if not url or not service_role:
         raise SystemExit("SUPABASE_URL et SUPABASE_SERVICE_ROLE requis")
 
     if args.recategorize_culture:
-        recategorize_culture_shows(url, service_role)
+        recategorize_world(url, service_role)
         if not (args.world or args.france_area or args.all_hubs or args.hub):
             return
 

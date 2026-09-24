@@ -685,12 +685,21 @@ function eventStatusLabel(ev) {
   if (ev.status === "approved") return t("ev_approved");
   return t("ev_pending");
 }
+function safeHttpUrl(raw) {
+  const url = String(raw || "").trim();
+  return /^https?:\/\//i.test(url) ? url : "";
+}
 function cardHtml(item, mode) {
   const cover = item.photo_url
     ? `<div class="cover" style="background-image:url('${String(item.photo_url).replace(/'/g, "%27")}')">`
     : `<div class="cover empty">🦌`;
   const why = mode === "guided"
         ? `<div class="why">${t("why")} ${item.category === "Shopping" || state.type === "shopping" ? t("why_shop") : state.type === "randonnee" ? t("why_hike") : state.unlimited ? t("why_unlim") : t("why_budget", { n: state.budget })} · ${t("why_people", { n: state.people, who: state.people > 1 ? t("persons") : t("person") })}${item.distance_km != null ? " · " + item.distance_km + " km" : ""}${item.photo_url ? "" : " · " + t("why_nophoto")}</div>`
+    : "";
+  const official = safeHttpUrl(item.website_url);
+  const site = official || safeHttpUrl(item.source_url);
+  const siteHtml = site
+    ? `<a class="linkish" href="${escapeHtml(site)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${official ? t("site_official") : t("site_outing")}</a>`
     : "";
   return `<article class="card${item.boosted ? " is-boost" : ""}" data-id="${item.id}" data-detail="${item.id}">
     ${cover}
@@ -705,6 +714,7 @@ function cardHtml(item, mode) {
       ${why}
       <button class="linkish" data-detail="${item.id}">${t("see_all")}</button>
       <button class="linkish" data-route="${item.id}">${t("go_there")}</button>
+      ${siteHtml}
       <button class="linkish" data-send-group="${item.id}">${t("send_g")}</button>
     </div>
   </article>`;
@@ -1935,6 +1945,7 @@ function render() {
 let searchTimer;
 function bind() {
   app.onclick = async (e) => {
+    if (e.target.closest("a[href]")) return;
     const t = e.target.closest("[data-act],[data-pick],[data-fav],[data-like],[data-detail],[data-city],[data-country],[data-explore-city],[data-send-group],[data-route],[data-vote],[data-lang]");
     if (!t) return;
     const act = t.dataset.act;
@@ -3020,23 +3031,35 @@ function applyLast() {
   });
 }
 
+function isDanceSchool(item) {
+  const name = item.name || "";
+  const desc = String(item.description || "").trim();
+  if (/(?:[eé]cole|ecole|studio|acad[eé]mie|institut|conservatoire|cfa|centre)\b.{0,40}\bdanse\b|dance\s+(?:school|academy|studio)|cours de danse|chor[eé]graph/i.test(name)) return true;
+  if (desc.startsWith("Dancing.") && /\b(studio|[eé]cole|ecole|acad[eé]mie|institut|conservatoire|cfa|school|danse|dance)\b/i.test(name)) {
+    if (/bo[iî]te|nightclub|discoth|club|disco|night/i.test(name)) return false;
+    return true;
+  }
+  return false;
+}
 function isCultureShow(item) {
   const club = /bo[iî]te|nightclub|discoth|club de nuit|dancing|karaoke|rooftop/i;
   if (club.test(item.name || "")) return false;
+  if (isDanceSchool(item)) return false;
   const blob = [item.name, item.description].join(" ");
   return /\b(concert|cabaret|jazz|op[eé]ra|ballet|th[eé][aâ]tre|theatre|philharmonie|spectacle|moulin rouge|paradis latin|new morning)\b/i.test(blob);
 }
 function isNightlifeItem(item) {
   const cat = item.category || "";
   if (cat === "Shopping" || cat === "Lieux gratuits et balades" || cat === "Randonnées" || cat === "Musées et culture") return false;
-  if (isCultureShow(item)) return false;
+  if (isDanceSchool(item) || isCultureShow(item)) return false;
   const blob = [item.name, item.description, item.category, item.kind].join(" ");
   const keep = /\b(bo[iî]te(?:\s+de\s+nuit)?|nightclub|night\s*club|discoth[eè]que|karaoke|karaok[ée]|rooftop|afterwork|techno|electro|dancing|dj\b|soir[eé]e\s+dansante|bal\s+populaire|guinguette|club\s+de\s+nuit|bar|pub|lounge|cocktail)\b/i;
   const drop = /\b(op[eé]ra|ballet|accor arena|jeune public|enfance|enfant|enfants|kids|children|young spectator|scolaire|maternelle|petite enfance|tout[-\s]?petit|for young|exposition|exhibition|r[eé]trospective|salon international|mus[eé]e|museum|photographe|peinture|painting|cin[eé]ma|cinema|film|s[eé]ance|dinosaure|coffee show|agriculture|alchimiste|poney\s*club|centre [eé]questre|balade|visite en famille|\ben famille\b|petit train|galerie|vestiaire|haute couture|concert|cabaret|jazz|th[eé][aâ]tre|theatre|philharmonie|spectacle|conservatoire|école de danse|ecole de danse|studio de danse)\b/i;
   const desc = String(item.description || "").trim();
   if (drop.test(blob) && !keep.test(item.name || "")) return false;
-  if (keep.test(item.name || "")) return true;
-  if (cat === "Soirées et concerts" && (item.kind || "") === "place" && /^(Boîte de nuit|Bar\.|Pub\.|Karaoké|Dancing\.|Guinguette)/.test(desc)) return true;
+  if (keep.test(item.name || "") && !isDanceSchool(item)) return true;
+  if (cat === "Soirées et concerts" && (item.kind || "") === "place" && /^(Boîte de nuit|Bar\.|Pub\.|Karaoké|Guinguette)/.test(desc)) return true;
+  if (cat === "Soirées et concerts" && desc.startsWith("Dancing.") && !isDanceSchool(item)) return true;
   return cat === "Soirées et concerts" && keep.test(blob) && !drop.test(blob);
 }
 function matchesType(item, type) {
