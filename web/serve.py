@@ -1608,10 +1608,13 @@ def create_group(name):
 
 def get_group(code):
     code = (code or "").strip().upper()
-    if len(code) < 4:
+    if len(code) < 4 or code == local_auth.AUTH_SHARE:
         return None
     rows = supabase_select("groups?share_code=eq." + urllib.parse.quote(code) + "&select=id,share_code,origin_label,filters,status")
-    return rows[0] if rows else None
+    row = rows[0] if rows else None
+    if row and (row.get("origin_label") or "") == local_auth.AUTH_LABEL:
+        return None
+    return row
 
 
 def compact_outing(outing):
@@ -1733,7 +1736,7 @@ def gotrue(method, path, body=None, bearer=None):
 
 
 def normalize_email(value):
-    return (value or "").strip().lower()
+    return local_auth.normalize_email(value)
 
 
 def normalize_phone(value):
@@ -2110,6 +2113,19 @@ def send_event_moderation_mail(ev, origin=""):
         return False
 
 
+def mail_unconfigured_error():
+    if os.environ.get("RENDER") or os.environ.get("RENDER_SERVICE_ID"):
+        return (
+            "L’envoi de mail n’est pas configuré sur ce serveur "
+            "(Resend manquant, SMTP bloqué par Render). "
+            "Ajoute RESEND_API_KEY dans les variables Render."
+        )
+    return (
+        "Impossible d’envoyer le mail Sinki. Connecte l’app Mail sur ce Mac, "
+        "ou ajoute un RESEND_API_KEY gratuit dans .env."
+    )
+
+
 def send_sinki_mail(to, code):
     try:
         if send_resend_mail(to, code):
@@ -2199,11 +2215,32 @@ def send_login_code(body, host_header=""):
             raise ValueError("Ce pseudo est déjà pris. Choisis-en un autre.")
         raise
     mailed = send_sinki_mail(email, otp)
-    if not mailed:
-        raise ValueError(
-            "Impossible d’envoyer le mail Sinki. Connecte l’app Mail sur ce Mac, ou ajoute un RESEND_API_KEY gratuit dans .env."
-        )
-    return {"ok": True, "email_note": "Regarde tes mails et tes spams. Sinki t’a envoyé un code à 6 chiffres."}
+    if mailed:
+        return {"ok": True, "email_note": "Regarde tes mails et tes spams. Sinki t’a envoyé un code à 6 chiffres."}
+    try:
+        send_supabase_otp_mail(email, create_user=True)
+        local_auth.mark_pending_external(email, "gotrue")
+        return {"ok": True, "email_note": "Regarde tes mails et tes spams. Sinki t’a envoyé un code à 6 chiffres."}
+    except urllib.error.HTTPError as exc:
+        payload, raw = http_error_body(exc)
+        raise ValueError(friendly_auth_error(payload, raw))
+    except Exception:
+        raise ValueError(mail_unconfigured_error())
+
+
+def verify_gotrue_otp(email, code):
+    last = None
+    for kind in ("email", "signup", "magiclink"):
+        try:
+            data = gotrue("POST", "/verify", {"type": kind, "email": email, "token": code})
+        except urllib.error.HTTPError as exc:
+            last = exc
+            continue
+        if data.get("access_token") or (data.get("user") or {}).get("id"):
+            return True
+    if last is not None:
+        return False
+    return False
 
 
 def verify_login_code(body):
@@ -2218,6 +2255,10 @@ def verify_login_code(body):
     }
     try:
         got = local_auth.verify_code(email, code, profile)
+        if not got and local_auth.pending_via(email) == "gotrue":
+            if not verify_gotrue_otp(email, code):
+                raise ValueError("Code incorrect ou expiré")
+            got = local_auth.finalize_login(email, profile)
     except ValueError as exc:
         if str(exc) == "taken":
             raise ValueError("Ce pseudo est déjà pris. Choisis-en un autre.")
@@ -2929,7 +2970,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 102}
+                payload = {"ok": True, "app": "sinki", "v": 103}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
@@ -3127,6 +3168,10 @@ def main():
     scrub_env()
     if not os.environ.get("SUPABASE_URL") or not os.environ.get("SUPABASE_SERVICE_ROLE"):
         raise SystemExit("SUPABASE_URL et SUPABASE_SERVICE_ROLE requis dans .env")
+    try:
+        local_auth.bootstrap()
+    except Exception:
+        pass
     os.chdir(ROOT)
     def warm():
         try:

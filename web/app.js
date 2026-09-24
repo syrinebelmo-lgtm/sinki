@@ -134,7 +134,7 @@ const state = {
   plusPeriod: localStorage.getItem("sinki-plus-period") || "year",
   unlimitedPeriod: localStorage.getItem("sinki-unlimited-period") || "year",
   paywall: false,
-  payFamily: "plus",
+  payFamily: "",
   billingBusy: "",
   billingHint: "",
   storePrices: null,
@@ -224,8 +224,30 @@ function loadQuota() {
   return { day, ids: q.ids };
 }
 function remainingToday() {
-  if (hasUnlimited()) return 99;
+  if (hasUnlimited()) return Infinity;
   return Math.max(0, FREE_DAY_CAP - loadQuota().ids.length);
+}
+function quotaBlocked() {
+  return !hasUnlimited() && remainingToday() <= 0;
+}
+function currentPlanLabel() {
+  const bits = [];
+  if (hasPlus()) bits.push(t("set_plan_plus"));
+  if (hasUnlimited()) bits.push(t("pay_unlim"));
+  if (hasNoAds()) bits.push(t("pay_noads"));
+  return bits.length ? bits.join(" · ") : t("set_plan_free");
+}
+function quotaStatusHtml() {
+  if (hasUnlimited()) return "";
+  if (quotaBlocked()) {
+    if (!state.payFamily) state.payFamily = "unlimited";
+    return `<div class="account-card quota-limit">
+      <p class="hint" style="margin-top:0"><strong>${t("plus_quota_title")}</strong></p>
+      <p class="hint">${t("plus_quota")}</p>
+      ${tariffsBody()}
+    </div>`;
+  }
+  return `<p class="hint">${t("quota_left", { n: remainingToday(), max: FREE_DAY_CAP })}</p>`;
 }
 function recordFound(rows) {
   if (hasUnlimited()) return rows || [];
@@ -245,7 +267,7 @@ function recordFound(rows) {
   return out;
 }
 function askQuota() {
-  if (hasUnlimited() || remainingToday() > 0) return false;
+  if (!quotaBlocked()) return false;
   openPaywall("quota");
   return true;
 }
@@ -288,7 +310,7 @@ function paywallHtml() {
     : state.paywall === "world" ? t("plus_title")
     : state.paywall === "event" ? t("pay_org_title")
     : t("pay_title");
-  const lead = state.paywall === "quota" ? t("plus_quota", { n: FREE_DAY_CAP })
+  const lead = state.paywall === "quota" ? t("plus_quota")
     : state.paywall === "world" ? t("plus_lead", { country: state.homeCountry?.name || t("france") })
     : state.paywall === "event" ? t("pay_event_lead")
     : t("pay_catalog_lead");
@@ -1468,7 +1490,7 @@ function settingsPage() {
     <div class="set-list">
       ${setRow("set-profile", t("set_profile"), logged ? (acc.nick ? "@" + acc.nick : "") : "")}
       ${setRow("set-home-country", t("set_home_country"), state.homeCountry?.name || "France")}
-      ${setRow("set-plan", t("set_plan"), hasPlus() ? t("set_plan_plus") : t("set_plan_free"))}
+      ${setRow("set-plan", t("set_plan"), currentPlanLabel())}
       ${setRow("set-events", t("ev_title"), "")}
       ${setRow("set-notifs", t("set_notifs"))}
       ${setRow("set-lang", t("set_lang_row"), lang)}
@@ -1716,7 +1738,7 @@ function render() {
     body = `<div class="home page has-nav">
       ${mascot("heureuse", t("home_mascot"))}
       <h1>${t("home_title")}</h1>
-      ${hasUnlimited() ? "" : `<p class="hint">${t("quota_left", { n: remainingToday(), max: FREE_DAY_CAP })}</p>`}
+      ${quotaStatusHtml()}
       <button class="choice featured" data-act="start"><h3>${t("home_cta")}</h3></button>
       ${last?.city ? `<button class="btn secondary" data-act="resume">↻ ${t("resume")}<small>${escapeHtml(last.city.name)} · ${last.budget == null ? t("budget_free") : t("budget_max", { n: last.budget })} · ${escapeHtml(vibeLabel)}</small></button>` : ""}
       ${navHtml("home")}
@@ -2184,7 +2206,7 @@ function bind() {
       return;
     }
     if (act === "home") { state.screen = "home"; render(); return; }
-    if (act === "start") { state.screen = "search"; state.step = 1; prefetchFeaturedCities(); render(); return; }
+    if (act === "start") { if (askQuota()) return; state.screen = "search"; state.step = 1; prefetchFeaturedCities(); render(); return; }
     if (act === "area-home") {
       applyHomeArea();
       state.countryQuery = "";
