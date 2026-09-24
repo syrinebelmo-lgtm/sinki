@@ -663,14 +663,30 @@ function searchStepLiveHtml() {
   if (state.area === "international" && !state.intCountry) return countrySuggestHtml();
   return citySuggestHtml();
 }
+function exploreMascotText() {
+  const pickingCountry = state.explorePickHome || (state.exploreScope === "world" && !state.exploreCountry);
+  const pickingCity = state.exploreScope === "world" && state.exploreCountry && !state.exploreCity;
+  if (state.exploreLoading) return t("explore_loading");
+  if (pickingCountry) return t("explore_pick_country");
+  if (pickingCity) {
+    if (state.exploreCityQ.trim().length >= 1 && !state.exploreCities.length) return t("explore_none");
+    return t("explore_pick_city");
+  }
+  if (state.exploreQ.trim().length >= 1 && !state.exploreOutings.length && !state.exploreCities.length) return t("explore_none");
+  if (state.exploreOutings.length || ((state.exploreQ || state.exploreCityQ).trim().length >= 1 && state.exploreCities.length)) return t("explore_found");
+  return t("explore_type");
+}
 function paintLiveSearch() {
   const box = $("#live-search");
   if (!box) {
     render();
     return;
   }
-  if (state.screen === "explore") box.innerHTML = exploreResultsHtml();
-  else if (state.screen === "settings" && state.settingsView === "home-country") box.innerHTML = countrySuggestHtml();
+  if (state.screen === "explore") {
+    box.innerHTML = exploreResultsHtml();
+    const masc = document.querySelector(".mascot-block p");
+    if (masc) masc.textContent = exploreMascotText();
+  } else if (state.screen === "settings" && state.settingsView === "home-country") box.innerHTML = countrySuggestHtml();
   else if (state.screen === "search" && state.step === 1) box.innerHTML = searchStepLiveHtml();
   else render();
 }
@@ -1753,14 +1769,7 @@ function render() {
   } else if (state.screen === "explore") {
     const pickingCountry = state.explorePickHome || (state.exploreScope === "world" && !state.exploreCountry);
     const pickingCity = state.exploreScope === "world" && state.exploreCountry && !state.exploreCity;
-    let masc = mascot("reflechit", pickingCountry ? t("explore_pick_country") : pickingCity ? t("explore_pick_city") : t("explore_type"));
-    if (state.exploreLoading) masc = mascot("reflechit", t("explore_loading"));
-    else if (pickingCity && state.exploreCityQ.trim().length >= 1 && !state.exploreCities.length)
-      masc = mascot("reflechit", t("explore_none"));
-    else if (!pickingCountry && !pickingCity && state.exploreQ.trim().length >= 1 && !state.exploreOutings.length && !state.exploreCities.length)
-      masc = mascot("reflechit", t("explore_none"));
-    else if (state.exploreOutings.length || ((state.exploreQ || state.exploreCityQ).trim().length >= 1 && state.exploreCities.length))
-      masc = mascot("reflechit", t("explore_found"));
+    const masc = mascot("reflechit", exploreMascotText());
     const homeName = state.homeCountry?.name || "France";
     const worldName = state.exploreCountry?.name || "";
     const cityName = state.exploreCity?.name || "";
@@ -1908,7 +1917,7 @@ function render() {
       : "";
     const who = state.people > 1 ? t("friends") : t("person");
     const budgetLine = listed || state.unlimited ? (state.type === "shopping" ? t("all_budgets") : state.type === "randonnee" ? t("trails") : t("budget_free")) : t("budget_max", { n: state.budget });
-    body = `<div class="page">
+    body = `<div class="page has-nav">
       ${state.weather ? `<div class="weather">${state.weather} · ${escapeHtml(state.city?.name || "")}</div>` : ""}
       <p class="lead" style="margin-bottom:0">${t("for_who", { n: state.people, who, city: state.city?.name || "" })}</p>
       <h1>${title}${listed && shown.length ? " · " + shown.length : ""}</h1>
@@ -1919,6 +1928,7 @@ function render() {
       <button class="btn outline" data-act="share" ${state.shareBusy ? "disabled" : ""}>${state.shareBusy ? t("share_busy") : t("share")}</button>
       ${state.shareHint ? `<p class="hint">${escapeHtml(state.shareHint)}</p>` : ""}
       <button class="ghost" data-act="edit">${t("edit")}</button>
+      ${navHtml("home")}
     </div>`;
   } else if (state.screen === "favs") {
     body = `<div class="page has-nav"><h1>${t("favs_title")}</h1>${state.favs.length ? mascot("emerveillee", t("favs_full")) + state.favs.map((item) => cardHtml(item, "fav")).join("") : mascot("emerveillee", t("favs_empty"))}${navHtml("favs")}</div>`;

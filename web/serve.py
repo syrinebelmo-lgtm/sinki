@@ -3070,7 +3070,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 107, "mail": mail_health()}
+                payload = {"ok": True, "app": "sinki", "v": 108, "mail": mail_health()}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
