@@ -1579,7 +1579,7 @@ function mascot(kind, text) {
 function pickThree(list, vibe) {
   const vibeCats = {
     "relax": ["Lieux gratuits et balades", "Randonnées", "Musées et culture"],
-    "fun": ["Activités et loisirs", "Restaurants et cafés", "Shopping", "Randonnées"],
+    "fun": ["Activités et loisirs", "Restaurants et cafés", "Shopping", "Soirées et concerts"],
     "culture": ["Musées et culture"],
     "party": ["Soirées et concerts"],
   };
@@ -1592,7 +1592,8 @@ function pickThree(list, vibe) {
     if (wanted.includes(o.category)) s += 9;
     if (o.category === "Randonnées") s += 6;
     if (vibe === "fun" && (o.kind === "restaurant" || (o.category || "").includes("loisirs"))) s += 3;
-    if (vibe === "party" && o.kind === "event") s += 4;
+    if ((vibe === "party" || vibe === "fun") && o.kind === "event" && (o.category || "") === "Soirées et concerts") s += 4;
+    if ((vibe === "party" || state.type === "soirees") && isNightlifeItem(o)) s += 12;
     return s;
   }
   function nameKey(n) {
@@ -2421,7 +2422,7 @@ function bind() {
     if (act === "search" || act === "resume") { if (act === "resume") applyLast(); await runSearch(); return; }
     if (act === "dice" && state.pool.length) {
       if (askQuota()) return;
-      const ranked = pickThree(state.pool, state.vibe);
+      const ranked = pickThree(state.pool, state.type === "soirees" ? "party" : state.vibe);
       const extra = state.pool.filter((o) => !ranked.some((r) => r.id === o.id));
       const bag = ranked.concat(extra.slice(0, 8));
       state.results = recordFound([bag[Math.floor(Math.random() * bag.length)]]);
@@ -3019,6 +3020,16 @@ function applyLast() {
   });
 }
 
+function isNightlifeItem(item) {
+  const cat = item.category || "";
+  if (cat === "Shopping" || cat === "Lieux gratuits et balades" || cat === "Randonnées") return false;
+  const blob = [item.name, item.description, item.category, item.kind].join(" ");
+  const keep = /\b(bo[iî]te(?:\s+de\s+nuit)?|nightclub|night\s*club|discoth[eè]que|karaoke|karaok[ée]|rooftop|afterwork|concert|festival|cabaret|op[eé]ra|ballet|jazz|techno|electro|dancing|dj\b|salle de concert|live\s*music|moulin rouge|paradis latin|new morning|accor arena|soir[eé]e\s+dansante|bal\s+populaire|guinguette|club\s+de\s+nuit|bar|pub|lounge|cocktail)\b/i;
+  const drop = /\b(jeune public|enfance|enfant|enfants|kids|children|young spectator|scolaire|maternelle|petite enfance|tout[-\s]?petit|for young|exposition|exhibition|r[eé]trospective|salon international|mus[eé]e|museum|photographe|peinture|painting|cin[eé]ma|cinema|film|s[eé]ance|dinosaure|coffee show|agriculture|alchimiste|poney\s*club|centre [eé]questre|balade|visite en famille|\ben famille\b|petit train|galerie|vestiaire|haute couture)\b/i;
+  if (drop.test(blob) && !keep.test(item.name || "")) return false;
+  if (keep.test(item.name || "")) return true;
+  return cat === "Soirées et concerts" && keep.test(blob) && !drop.test(blob);
+}
 function matchesType(item, type) {
   if (!type || type === "all") return true;
   const cat = item.category || "";
@@ -3028,7 +3039,7 @@ function matchesType(item, type) {
   if (type === "activites") return cat === "Activités et loisirs";
   if (type === "evenements") return kind === "event";
   if (type === "balades") return cat === "Lieux gratuits et balades" || cat === "Randonnées";
-  if (type === "soirees") return cat === "Soirées et concerts" || /\b(bar|pub|club|night|karaoke|lounge|disco|beer|cocktail|rooftop)\b/i.test(item.name || "");
+  if (type === "soirees") return isNightlifeItem(item);
   if (type === "culture") return cat === "Musées et culture";
   if (type === "randonnee") return cat === "Randonnées";
   return true;
@@ -3110,7 +3121,7 @@ async function runSearch() {
     state.pool = rows.filter((o) => typeForMatch === "all" || matchesType(o, typeForMatch));
     state.nearestFallback = state.pool.some((o) => o.search_fallback === "nearest");
     if (state.nearestFallback) state.pool.sort((a, b) => (a.distance_km ?? 99) - (b.distance_km ?? 99));
-    state.results = recordFound(pickThree(state.pool, state.vibe));
+    state.results = recordFound(pickThree(state.pool, state.type === "soirees" ? "party" : state.vibe));
     const w = await wRes.json();
     state.weather = weatherLabel(w.current?.weather_code, w.current?.temperature_2m);
     localStorage.setItem("sinki-last", JSON.stringify({

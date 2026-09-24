@@ -71,7 +71,31 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PHONE_MAIL_DOMAIN = "phone.sinki.app"
 PHONE_DIGITS_RE = re.compile(r"^\d{8,15}$")
 NIGHT_NAME = re.compile(
-    r"\b(bar|pub|club|night|karaoke|lounge|disco|beer|cocktail|tapas|rooftop)\b",
+    r"\b(bar|pub|club|night|karaoke|karaok[eé]|lounge|disco|discoth|"
+    r"beer|cocktail|tapas|rooftop|bo[iî]te|cabaret|concert|festival|"
+    r"op[eé]ra|ballet|jazz|techno|electro|dancing|afterwork|"
+    r"salle de concert|live\s*music|guinguette|soir[eé]e dansante)\b",
+    re.I,
+)
+NIGHT_KEEP = re.compile(
+    r"\b(bo[iî]te(?:\s+de\s+nuit)?|nightclub|night\s*club|discoth[eè]que|"
+    r"karaoke|karaok[eé]|rooftop|afterwork|concert|festival|"
+    r"cabaret|op[eé]ra|ballet|jazz|techno|electro|"
+    r"dancing|dj\b|salle de concert|live\s*music|moulin rouge|"
+    r"paradis latin|new morning|accor arena|"
+    r"soir[eé]e\s+dansante|bal\s+populaire|guinguette|club\s+de\s+nuit)\b",
+    re.I,
+)
+NIGHT_DROP = re.compile(
+    r"\b(jeune public|enfance|enfant|enfants|kids|children|young spectator|"
+    r"scolaire|maternelle|petite enfance|tout[-\s]?petit|for young|"
+    r"exposition|exhibition|r[eé]trospective|salon international|"
+    r"mus[eé]e|museum|photographe|peinture|painting|"
+    r"cin[eé]ma|cinema|film|s[eé]ance|"
+    r"dinosaure|coffee show|agriculture|alchimiste|"
+    r"poney\s*club|centre [eé]questre|balade|"
+    r"visite en famille|\ben famille\b|petit train|"
+    r"galerie|vestiaire|mode en majest|haute couture)\b",
     re.I,
 )
 TO_EUR = {
@@ -299,6 +323,27 @@ CAT_NIGHT = "Soirées et concerts"
 CAT_PLAY = "Activités et loisirs"
 
 
+def outing_blob(row):
+    return " ".join(
+        str(row.get(key) or "")
+        for key in ("name", "description", "category", "kind")
+    )
+
+
+def is_nightlife(row):
+    if (row.get("category") or "") in (CAT_SHOP, CAT_WALK, CAT_HIKE):
+        return False
+    name = row.get("name") or ""
+    blob = outing_blob(row)
+    if NIGHT_DROP.search(blob) and not NIGHT_KEEP.search(name):
+        return False
+    if NIGHT_KEEP.search(name) or NIGHT_NAME.search(name):
+        return True
+    if (row.get("category") or "") == CAT_NIGHT and NIGHT_KEEP.search(blob) and not NIGHT_DROP.search(blob):
+        return True
+    return False
+
+
 def _money_pair(row):
     try:
         a = float(row["price_min"]) if row.get("price_min") is not None else None
@@ -368,6 +413,9 @@ def qc_outing(row):
         row["price_min"] = a
         row["price_max"] = b if b is not None else a
         row["price_unknown"] = False
+    if cat == CAT_NIGHT and not is_nightlife(row):
+        row["category"] = CAT_CULT
+        cat = CAT_CULT
     need_tickets = False
     need_id = bool(ID_NAME.search(name))
     if not FREE_LOOK.search(name):
@@ -1105,7 +1153,7 @@ def fetch_outings(params):
                 if outside_france_mainland(row["latitude"], row["longitude"]):
                     return False
         if typ == "soirees":
-            if cat != "Soirées et concerts" and not NIGHT_NAME.search(row.get("name") or ""):
+            if not is_nightlife(row):
                 return False
         if typ == "culture" and cat != "Musées et culture":
             return False
@@ -1137,6 +1185,15 @@ def fetch_outings(params):
         indoor = "any"
         pooled = mark_relax(pool_from(geo_rows(radius), False), "indoor")
         indoor = saved_indoor
+    if not pooled and typ == "soirees" and lat is not None:
+        saved_r = radius
+        for km in (30, 60):
+            radius = km
+            extra = pool_from(geo_rows(km), False)
+            if extra:
+                pooled = mark_relax(extra, "far")
+                break
+        radius = saved_r
     if not pooled and typ not in ("all", "shopping", "randonnee"):
         saved_typ = typ
         typ = "all"
@@ -2711,7 +2768,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/place-story":
                 payload = place_story(qs)
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 96}
+                payload = {"ok": True, "app": "sinki", "v": 97}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
