@@ -16,10 +16,21 @@ def _now():
     return time.time()
 
 
-def public_entitlements(acc):
-    raw = (acc or {}).get("entitlements") if isinstance(acc, dict) else {}
+def _account_view(acc_or_user):
+    src = acc_or_user if isinstance(acc_or_user, dict) else {}
+    meta = src.get("user_metadata") if isinstance(src.get("user_metadata"), dict) else {}
+    raw = src.get("entitlements")
+    if not isinstance(raw, dict):
+        raw = meta.get("entitlements")
     if not isinstance(raw, dict):
         raw = {}
+    plan = src.get("plan") or meta.get("plan") or ""
+    return {"entitlements": raw, "plan": plan}
+
+
+def public_entitlements(acc):
+    view = _account_view(acc)
+    raw = view["entitlements"]
     now = _now()
     out = {}
     for kind, row in raw.items():
@@ -31,6 +42,18 @@ def public_entitlements(acc):
         else:
             item["active"] = float(item.get("expires") or 0) > now
         out[kind] = item
+    plus_on = (out.get("plus") or {}).get("active") or str(view.get("plan") or "") == "plus"
+    if plus_on:
+        plus_row = out.get("plus") or {}
+        unlim = dict(out.get("unlimited") or {})
+        if not unlim.get("active"):
+            unlim["active"] = True
+            if plus_row.get("expires") and not unlim.get("expires"):
+                unlim["expires"] = plus_row["expires"]
+            if plus_row.get("period") and not unlim.get("period"):
+                unlim["period"] = plus_row["period"]
+            unlim["included_in"] = "plus"
+            out["unlimited"] = unlim
     return out
 
 
@@ -38,7 +61,34 @@ def plus_active(acc):
     ents = public_entitlements(acc)
     if (ents.get("plus") or {}).get("active"):
         return True
-    return str((acc or {}).get("plan") or "") == "plus"
+    return str(_account_view(acc).get("plan") or "") == "plus"
+
+
+def unlimited_active(acc):
+    ents = public_entitlements(acc)
+    if (ents.get("unlimited") or {}).get("active"):
+        return True
+    return plus_active(acc)
+
+
+def entitlements_for_user(user):
+    return public_entitlements(user)
+
+
+def _grant_unlimited(ents, expires, period, product_id, source):
+    prev = ents.get("unlimited") if isinstance(ents.get("unlimited"), dict) else {}
+    prev_exp = float(prev.get("expires") or 0)
+    if prev.get("lifetime") or prev_exp >= float(expires or 0):
+        return
+    row = {
+        "productId": prev.get("productId") or product_id,
+        "period": prev.get("period") or period,
+        "expires": expires,
+        "source": source,
+    }
+    if not prev.get("productId"):
+        row["included_in"] = "plus"
+    ents["unlimited"] = row
 
 
 def apply_verified(acc, product_id, source="iap"):
@@ -49,13 +99,15 @@ def apply_verified(acc, product_id, source="iap"):
     now = _now()
     fam = prod["family"]
     if fam == "plus":
+        expires = now + PERIOD_SEC.get(prod["period"], PERIOD_SEC["month"])
         ents["plus"] = {
             "productId": prod["id"],
             "period": prod["period"],
-            "expires": now + PERIOD_SEC.get(prod["period"], PERIOD_SEC["month"]),
+            "expires": expires,
             "source": source,
         }
         acc["plan"] = "plus"
+        _grant_unlimited(ents, expires, prod["period"], prod["id"], source)
     elif fam == "unlimited":
         ents["unlimited"] = {
             "productId": prod["id"],

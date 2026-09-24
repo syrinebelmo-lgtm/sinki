@@ -3,14 +3,14 @@
 
 CATALOG = {
     "plus": {
-        "week": {"id": "sinki.plus.week", "family": "plus", "period": "week", "eur": 2.99},
-        "month": {"id": "sinki.plus.month", "family": "plus", "period": "month", "eur": 9.99},
-        "year": {"id": "sinki.plus.year", "family": "plus", "period": "year", "eur": 99.99},
+        "week": {"id": "sinki.plus.week", "family": "plus", "period": "week", "eur": 2.99, "grants": ["plus", "unlimited"]},
+        "month": {"id": "sinki.plus.month", "family": "plus", "period": "month", "eur": 9.99, "grants": ["plus", "unlimited"]},
+        "year": {"id": "sinki.plus.year", "family": "plus", "period": "year", "eur": 99.99, "grants": ["plus", "unlimited"]},
     },
     "unlimited": {
-        "week": {"id": "sinki.unlimited.week", "family": "unlimited", "period": "week", "eur": 1.99},
-        "month": {"id": "sinki.unlimited.month", "family": "unlimited", "period": "month", "eur": 7.99},
-        "year": {"id": "sinki.unlimited.year", "family": "unlimited", "period": "year", "eur": 89.99},
+        "week": {"id": "sinki.unlimited.week", "family": "unlimited", "period": "week", "eur": 1.99, "grants": ["unlimited"]},
+        "month": {"id": "sinki.unlimited.month", "family": "unlimited", "period": "month", "eur": 7.99, "grants": ["unlimited"]},
+        "year": {"id": "sinki.unlimited.year", "family": "unlimited", "period": "year", "eur": 89.99, "grants": ["unlimited"]},
     },
     "event": {
         "publish": {"id": "sinki.event.publish", "family": "event", "period": "once", "eur": 4.99, "days": 1},

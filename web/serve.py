@@ -1769,15 +1769,17 @@ def auth_identity(body):
 def public_user(user, phone=""):
     email = normalize_email(user.get("email") or "")
     meta = user.get("user_metadata") or {}
+    ents = sinki_billing.entitlements_for_user(user)
+    plan = "plus" if sinki_billing.plus_active(user) else (meta.get("plan") or "free")
     return {
         "id": user.get("id"),
         "email": email,
         "first_name": (meta.get("first_name") or "")[:40],
         "last_name": (meta.get("last_name") or "")[:40],
         "nick": (meta.get("nick") or "")[:40],
-        "plan": (meta.get("plan") or "free")[:12],
+        "plan": str(plan)[:12],
         "avatar_url": (meta.get("avatar_url") or "")[:180],
-        "entitlements": meta.get("entitlements") if isinstance(meta.get("entitlements"), dict) else {},
+        "entitlements": ents,
     }
 
 
@@ -2970,7 +2972,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 104}
+                payload = {"ok": True, "app": "sinki", "v": 105}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
@@ -2978,7 +2980,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not user:
                     self.send_json({"error": "non connecté"}, 401)
                     return
-                payload = {"ok": True, "entitlements": (user.get("user_metadata") or {}).get("entitlements") or {}}
+                payload = {"ok": True, "entitlements": sinki_billing.entitlements_for_user(user)}
             elif path == "/api/billing/confirm" and post:
                 user = user_from_bearer(self.headers.get("Authorization"))
                 if not user:
@@ -2989,7 +2991,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "ok": False,
                     "verified": False,
                     "error": why,
-                    "entitlements": (user.get("user_metadata") or {}).get("entitlements") or {},
+                    "entitlements": sinki_billing.entitlements_for_user(user),
                 }, 402)
                 return
             elif path == "/api/billing/restore" and post:
@@ -2999,7 +3001,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return
                 payload = {
                     "ok": True,
-                    "entitlements": (user.get("user_metadata") or {}).get("entitlements") or {},
+                    "entitlements": sinki_billing.entitlements_for_user(user),
                 }
             elif path == "/api/events/review":
                 qs_id = (qs.get("id") or [""])[0]

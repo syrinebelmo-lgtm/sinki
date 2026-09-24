@@ -78,16 +78,16 @@ fr: {
   set_plan_current: "ton offre",
   set_plan_free_lead: "Ton pays ({country}) via le VPN. {n} sorties trouvées par jour. Favoris, groupe, compte : inclus.",
   set_plan_plus: "Sinki Plus",
-  set_plan_plus_lead: "L’international : tous les pays hors du tien. Semaine, mois ou an.",
+  set_plan_plus_lead: "L’international et les sorties illimitées : tous les pays hors du tien, sans plafond de 6 par jour. Semaine, mois ou an.",
   plus_week: "1 semaine", plus_month: "1 mois", plus_year: "1 an",
   plus_quota_title: "Tu as atteint ta limite",
-  plus_quota: "Le plafond du jour est atteint. « Sorties illimitées » l’enlève.",
+  plus_quota: "Le plafond du jour est atteint. Sinki Plus l’enlève (international + sorties illimitées). « Sorties illimitées » enlève seulement le plafond.",
   plus_events: "Publier un événement est payant, à part de Sinki Plus.",
   quota_left: "{n}/{max} sorties restantes aujourd’hui",
   pay_title: "Les offres Sinki",
   pay_catalog_lead: "Choisis ce dont tu as besoin. Tu peux fermer et rester sur le gratuit.",
   pay_unlim: "Sorties illimitées",
-  pay_unlim_lead: "Plus de limite de 6 sorties par jour.",
+  pay_unlim_lead: "Plus de limite de 6 sorties par jour. Sinki Plus inclut déjà ça, plus l’international.",
   pay_org: "Organisateur",
   pay_org_title: "Publier un événement",
   pay_event_lead: "D’abord la publication + boost 24 h. Ensuite tu peux ajouter un boost plus long.",
@@ -156,13 +156,13 @@ fr: {
   ev_comment_ph: "Dis ce que tu penses…",
   ev_comment_send: "Publier",
   ev_social_login: "Connecte-toi pour liker et commenter.",
-  set_plan_plus_on: "Plus est actif sur ce compte.",
-  set_plan_lead: "Ton pays est gratuit. L’international sera dans Sinki Plus.",
-  set_plan_soon: "Le paiement (carte / Apple) arrive. Tu peux déjà activer Plus pour tester.",
-  plus_title: "L’international est dans Sinki Plus",
-  plus_lead: "Gratuit chez toi, en {country}. Plus ouvre tous les autres pays.",
+  set_plan_plus_on: "Plus est actif : international et sorties illimitées.",
+  set_plan_lead: "Ton pays est gratuit (6 sorties/jour). Sinki Plus ouvre l’international et enlève le plafond.",
+  set_plan_soon: "Le paiement (carte / Apple) arrive. Rien n’est activé sans achat confirmé.",
+  plus_title: "L’international et les sorties illimitées sont dans Sinki Plus",
+  plus_lead: "Gratuit chez toi, en {country}, avec 6 sorties par jour. Plus ouvre tous les autres pays et enlève le plafond.",
   plus_cta: "Passer à Sinki Plus",
-  plus_need_account: "Connecte-toi pour prendre Sinki Plus et ouvrir l’international.",
+  plus_need_account: "Connecte-toi pour prendre Sinki Plus : international et sorties illimitées.",
   set_help_title: "Aide et support",
   set_help_q1: "Comment je me connecte ?", set_help_a1: "Avec ton mail et un code à 6 chiffres. Pas de mot de passe.",
   set_help_q2: "Pourquoi mon pseudo est refusé ?", set_help_a2: "Il doit être unique. S’il est déjà pris, choisis-en un autre.",
@@ -214,7 +214,7 @@ Le compte se crée avec un email. Se déconnecter ne supprime pas le compte. La 
 Sinki est fourni « en l’état ». Les disponibilités, horaires et prix des lieux peuvent changer chez les organisateurs ou établissements.
 
 Le droit applicable est celui du responsable indiqué dans les mentions légales. Contact : bonjour@sinki.app.`,
-  legal_purchases: `Sinki Plus (2,99 / 9,99 / 99,99 €), Sorties illimitées (1,99 / 7,99 / 89,99 €), Sinki sans pub (5,99 € paiement unique) et les événements (4,99 € publication + 24 h, puis 7,99 / 12,99 / 39,99 € de boost extra) sont les tarifs de référence. Les prix store (devise, reçus) s’afficheront dès que les achats App Store / Google Play seront branchés.
+  legal_purchases: `Sinki Plus (2,99 / 9,99 / 99,99 € : international et sorties illimitées), Sorties illimitées (1,99 / 7,99 / 89,99 € : sans plafond quotidien), Sinki sans pub (5,99 € paiement unique) et les événements (4,99 € publication + 24 h, puis 7,99 / 12,99 / 39,99 € de boost extra) sont les tarifs de référence. Les prix store (devise, reçus) s’afficheront dès que les achats App Store / Google Play seront branchés.
 
 Rien n’est activé sans confirmation d’achat. Restauration des achats prévue. Un même abonnement déjà actif ne se rachète pas.
 
@@ -405,16 +405,16 @@ en: {
   set_plan_current: "your plan",
   set_plan_free_lead: "Your country ({country}) from the VPN. {n} found outings per day. Favorites, group, account: included.",
   set_plan_plus: "Sinki Plus",
-  set_plan_plus_lead: "International: every country outside yours. Week, month or year.",
+  set_plan_plus_lead: "International and unlimited outings: every country outside yours, with no 6-a-day cap. Week, month or year.",
   plus_week: "1 week", plus_month: "1 month", plus_year: "1 year",
   plus_quota_title: "You’ve reached your limit",
-  plus_quota: "Today’s cap is reached. Unlimited outings removes it.",
+  plus_quota: "Today’s cap is reached. Sinki Plus removes it (international + unlimited outings). Unlimited outings only removes the cap.",
   plus_events: "Publishing an event is paid, separate from Sinki Plus.",
   quota_left: "{n}/{max} outings left today",
   pay_title: "Sinki plans",
   pay_catalog_lead: "Pick what you need. You can close and stay on free.",
   pay_unlim: "Unlimited outings",
-  pay_unlim_lead: "No more 6-outings-a-day cap.",
+  pay_unlim_lead: "No more 6-outings-a-day cap. Sinki Plus already includes that, plus international.",
   pay_org: "Organizer",
   pay_org_title: "Publish an event",
   pay_event_lead: "First: publish + 24h boost. Then you can add a longer boost.",
@@ -483,12 +483,13 @@ en: {
   ev_comment_ph: "Say what you think…",
   ev_comment_send: "Post",
   ev_social_login: "Log in to like and comment.",
-  set_plan_lead: "Your country is free. International will be in Sinki Plus.",
-  set_plan_soon: "Card / Apple payment is next. You can turn Plus on now to try it.",
-  plus_title: "International is in Sinki Plus",
-  plus_lead: "Free at home in {country}. Plus unlocks every other country.",
+  set_plan_plus_on: "Plus is active: international and unlimited outings.",
+  set_plan_lead: "Your country is free (6 outings/day). Sinki Plus unlocks international and removes the cap.",
+  set_plan_soon: "Card / Apple payment is next. Nothing is unlocked without a confirmed purchase.",
+  plus_title: "International and unlimited outings are in Sinki Plus",
+  plus_lead: "Free at home in {country}, with 6 outings a day. Plus unlocks every other country and removes the cap.",
   plus_cta: "Get Sinki Plus",
-  plus_need_account: "Log in to get Sinki Plus and open international.",
+  plus_need_account: "Log in to get Sinki Plus: international and unlimited outings.",
   set_help_title: "Help & support",
   set_help_q1: "How do I log in?", set_help_a1: "With your email and a 6-digit code. No password.",
   set_help_q2: "Why was my username refused?", set_help_a2: "It has to be unique. If it’s taken, pick another one.",
@@ -540,7 +541,7 @@ Accounts are created with an email. Logging out does not delete the account. Per
 Sinki is provided as-is. Opening hours and prices can change at the venue.
 
 Governing law is that of the controller in the legal notice. Contact: bonjour@sinki.app.`,
-  legal_purchases: `Sinki Plus (€2.99 / €9.99 / €99.99), Unlimited outings (€1.99 / €7.99 / €89.99), Sinki ad-free (€5.99 one-time) and events (€4.99 publish + 24h, then €7.99 / €12.99 / €39.99 extra boost) are list prices. Store prices (currency, receipts) show once App Store / Google Play IAP is connected.
+  legal_purchases: `Sinki Plus (€2.99 / €9.99 / €99.99: international and unlimited outings), Unlimited outings (€1.99 / €7.99 / €89.99: no daily cap), Sinki ad-free (€5.99 one-time) and events (€4.99 publish + 24h, then €7.99 / €12.99 / €39.99 extra boost) are list prices. Store prices (currency, receipts) show once App Store / Google Play IAP is connected.
 
 Nothing is unlocked without a confirmed purchase. Restore is available. The same active plan cannot be bought twice.
 

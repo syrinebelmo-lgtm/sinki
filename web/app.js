@@ -208,7 +208,7 @@ function hasPlus() {
   return Boolean(liveEnt("plus")) || (state.account && state.account.plan === "plus");
 }
 function hasUnlimited() {
-  return Boolean(liveEnt("unlimited"));
+  return Boolean(liveEnt("unlimited")) || hasPlus();
 }
 function hasNoAds() {
   return Boolean(liveEnt("no_ads"));
@@ -233,14 +233,14 @@ function quotaBlocked() {
 function currentPlanLabel() {
   const bits = [];
   if (hasPlus()) bits.push(t("set_plan_plus"));
-  if (hasUnlimited()) bits.push(t("pay_unlim"));
+  else if (hasUnlimited()) bits.push(t("pay_unlim"));
   if (hasNoAds()) bits.push(t("pay_noads"));
   return bits.length ? bits.join(" · ") : t("set_plan_free");
 }
 function quotaStatusHtml() {
   if (hasUnlimited()) return "";
   if (quotaBlocked()) {
-    if (!state.payFamily) state.payFamily = "unlimited";
+    if (!state.payFamily) state.payFamily = "plus";
     return `<div class="account-card quota-limit">
       <p class="hint" style="margin-top:0"><strong>${t("plus_quota_title")}</strong></p>
       <p class="hint">${t("plus_quota")}</p>
@@ -283,7 +283,7 @@ function eventFee(key) {
 }
 function openPaywall(reason) {
   state.paywall = reason || "catalog";
-  state.payFamily = reason === "quota" ? "unlimited" : reason === "event" ? "event" : reason === "ads" ? "noads" : "plus";
+  state.payFamily = reason === "quota" ? "plus" : reason === "event" ? "event" : reason === "ads" ? "noads" : "plus";
   state.billingHint = "";
   if (!state.plusPeriod) state.plusPeriod = "year";
   if (!state.unlimitedPeriod) state.unlimitedPeriod = "year";
@@ -1329,6 +1329,7 @@ function settingsPage() {
         <p class="hint" style="margin-top:0"><strong>${t("set_plan_free")}</strong>${hasPlus() || hasUnlimited() ? "" : " · " + t("set_plan_current")}</p>
         <p class="hint">${t("set_plan_free_lead", { country: home, n: FREE_DAY_CAP })}</p>
       </div>
+      ${hasPlus() ? `<p class="hint">${t("set_plan_plus_on")}</p>` : ""}
       ${tariffsBody()}
       ${navHtml("home")}
     </div>`;
