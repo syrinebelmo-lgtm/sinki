@@ -72,22 +72,26 @@ PHONE_MAIL_DOMAIN = "phone.sinki.app"
 PHONE_DIGITS_RE = re.compile(r"^\d{8,15}$")
 NIGHT_NAME = re.compile(
     r"\b(bar|pub|club|night|karaoke|karaok[eé]|lounge|disco|discoth|"
-    r"beer|cocktail|tapas|rooftop|bo[iî]te|cabaret|concert|festival|"
-    r"op[eé]ra|ballet|jazz|techno|electro|dancing|afterwork|"
-    r"salle de concert|live\s*music|guinguette|soir[eé]e dansante)\b",
+    r"beer|cocktail|tapas|rooftop|bo[iî]te|cabaret|"
+    r"jazz|techno|electro|dancing|afterwork|"
+    r"guinguette|soir[eé]e dansante)\b",
     re.I,
 )
 NIGHT_KEEP = re.compile(
     r"\b(bo[iî]te(?:\s+de\s+nuit)?|nightclub|night\s*club|discoth[eè]que|"
-    r"karaoke|karaok[eé]|rooftop|afterwork|concert|festival|"
-    r"cabaret|op[eé]ra|ballet|jazz|techno|electro|"
-    r"dancing|dj\b|salle de concert|live\s*music|moulin rouge|"
-    r"paradis latin|new morning|accor arena|"
+    r"karaoke|karaok[eé]|rooftop|afterwork|"
+    r"cabaret|jazz|techno|electro|"
+    r"dancing|dj\b|moulin rouge|"
+    r"paradis latin|new morning|"
     r"soir[eé]e\s+dansante|bal\s+populaire|guinguette|club\s+de\s+nuit)\b",
     re.I,
 )
+NIGHT_CLUB = re.compile(
+    r"bo[iî]te|nightclub|discoth|club de nuit|dancing|karaoke|rooftop",
+    re.I,
+)
 NIGHT_DROP = re.compile(
-    r"\b(jeune public|enfance|enfant|enfants|kids|children|young spectator|"
+    r"\b(op[eé]ra|ballet|accor arena|jeune public|enfance|enfant|enfants|kids|children|young spectator|"
     r"scolaire|maternelle|petite enfance|tout[-\s]?petit|for young|"
     r"exposition|exhibition|r[eé]trospective|salon international|"
     r"mus[eé]e|museum|photographe|peinture|painting|"
@@ -331,17 +335,35 @@ def outing_blob(row):
 
 
 def is_nightlife(row):
-    if (row.get("category") or "") in (CAT_SHOP, CAT_WALK, CAT_HIKE):
+    if (row.get("category") or "") in (CAT_SHOP, CAT_WALK, CAT_HIKE, CAT_CULT):
         return False
     name = row.get("name") or ""
     blob = outing_blob(row)
-    if NIGHT_DROP.search(blob) and not NIGHT_KEEP.search(name):
+    if NIGHT_DROP.search(blob) and not NIGHT_KEEP.search(name) and not NIGHT_CLUB.search(name):
         return False
-    if NIGHT_KEEP.search(name) or NIGHT_NAME.search(name):
+    if NIGHT_KEEP.search(name) or NIGHT_NAME.search(name) or NIGHT_CLUB.search(name):
         return True
+    desc = (row.get("description") or "").strip()
+    if (row.get("category") or "") == CAT_NIGHT and (row.get("kind") or "") == "place":
+        if desc.startswith(("Boîte de nuit", "Bar.", "Pub.", "Karaoké", "Dancing.", "Guinguette")):
+            return True
     if (row.get("category") or "") == CAT_NIGHT and NIGHT_KEEP.search(blob) and not NIGHT_DROP.search(blob):
         return True
     return False
+
+
+def nightlife_rank(row):
+    name = row.get("name") or ""
+    desc = row.get("description") or ""
+    if re.search(r"karaoke|karaok[eé]", name, re.I):
+        club = 1
+    elif desc.startswith("Boîte de nuit") or NIGHT_CLUB.search(name) or re.search(r"\bklub\b|mixclub|taken-club|\bclub\b", name, re.I):
+        club = 0
+    elif re.search(r"\b(bar|pub|lounge|cocktail|cabaret)\b", name, re.I) or desc.startswith(("Bar.", "Pub.")):
+        club = 2
+    else:
+        club = 2
+    return (club, outing_rank(row))
 
 
 def _money_pair(row):
@@ -1057,6 +1079,8 @@ def fetch_outings(params):
         type_cat = "Shopping"
     elif typ == "randonnee":
         type_cat = "Randonnées"
+    elif typ == "soirees":
+        type_cat = "Soirées et concerts"
     type_filter = ("&category=eq." + urllib.parse.quote(type_cat)) if type_cat else ""
 
     def geo_rows(km, pictured_only=False):
@@ -1172,7 +1196,10 @@ def fetch_outings(params):
 
     def pool_from(items, beyond):
         kept = [row for row in unique_rows(items) if keep_row(row, beyond)]
-        return quality_pool(unescape_payload(kept))
+        kept = quality_pool(unescape_payload(kept))
+        if typ == "soirees":
+            kept.sort(key=nightlife_rank)
+        return kept
 
     def mark_relax(rows, reason):
         for row in rows:
@@ -2768,7 +2795,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/place-story":
                 payload = place_story(qs)
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 97}
+                payload = {"ok": True, "app": "sinki", "v": 98}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":

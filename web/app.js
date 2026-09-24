@@ -3022,12 +3022,14 @@ function applyLast() {
 
 function isNightlifeItem(item) {
   const cat = item.category || "";
-  if (cat === "Shopping" || cat === "Lieux gratuits et balades" || cat === "Randonnées") return false;
+  if (cat === "Shopping" || cat === "Lieux gratuits et balades" || cat === "Randonnées" || cat === "Musées et culture") return false;
   const blob = [item.name, item.description, item.category, item.kind].join(" ");
-  const keep = /\b(bo[iî]te(?:\s+de\s+nuit)?|nightclub|night\s*club|discoth[eè]que|karaoke|karaok[ée]|rooftop|afterwork|concert|festival|cabaret|op[eé]ra|ballet|jazz|techno|electro|dancing|dj\b|salle de concert|live\s*music|moulin rouge|paradis latin|new morning|accor arena|soir[eé]e\s+dansante|bal\s+populaire|guinguette|club\s+de\s+nuit|bar|pub|lounge|cocktail)\b/i;
-  const drop = /\b(jeune public|enfance|enfant|enfants|kids|children|young spectator|scolaire|maternelle|petite enfance|tout[-\s]?petit|for young|exposition|exhibition|r[eé]trospective|salon international|mus[eé]e|museum|photographe|peinture|painting|cin[eé]ma|cinema|film|s[eé]ance|dinosaure|coffee show|agriculture|alchimiste|poney\s*club|centre [eé]questre|balade|visite en famille|\ben famille\b|petit train|galerie|vestiaire|haute couture)\b/i;
+  const keep = /\b(bo[iî]te(?:\s+de\s+nuit)?|nightclub|night\s*club|discoth[eè]que|karaoke|karaok[ée]|rooftop|afterwork|cabaret|jazz|techno|electro|dancing|dj\b|moulin rouge|paradis latin|new morning|soir[eé]e\s+dansante|bal\s+populaire|guinguette|club\s+de\s+nuit|bar|pub|lounge|cocktail)\b/i;
+  const drop = /\b(op[eé]ra|ballet|accor arena|jeune public|enfance|enfant|enfants|kids|children|young spectator|scolaire|maternelle|petite enfance|tout[-\s]?petit|for young|exposition|exhibition|r[eé]trospective|salon international|mus[eé]e|museum|photographe|peinture|painting|cin[eé]ma|cinema|film|s[eé]ance|dinosaure|coffee show|agriculture|alchimiste|poney\s*club|centre [eé]questre|balade|visite en famille|\ben famille\b|petit train|galerie|vestiaire|haute couture)\b/i;
+  const desc = String(item.description || "").trim();
   if (drop.test(blob) && !keep.test(item.name || "")) return false;
   if (keep.test(item.name || "")) return true;
+  if (cat === "Soirées et concerts" && (item.kind || "") === "place" && /^(Boîte de nuit|Bar\.|Pub\.|Karaoké|Dancing\.|Guinguette)/.test(desc)) return true;
   return cat === "Soirées et concerts" && keep.test(blob) && !drop.test(blob);
 }
 function matchesType(item, type) {
