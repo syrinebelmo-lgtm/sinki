@@ -1741,9 +1741,9 @@ function render() {
     body = `<div class="home page has-nav">
       ${mascot("heureuse", t("home_mascot"))}
       <h1>${t("home_title")}</h1>
-      ${quotaStatusHtml()}
       <button class="choice featured" data-act="start"><h3>${t("home_cta")}</h3></button>
       ${last?.city ? `<button class="btn secondary" data-act="resume">↻ ${t("resume")} <small>${escapeHtml(last.city.name)} · ${last.budget == null ? t("budget_free") : t("budget_max", { n: last.budget })} · ${escapeHtml(vibeLabel)}</small></button>` : ""}
+      ${quotaStatusHtml()}
       ${navHtml("home")}
     </div>`;
   } else if (state.screen === "settings") {
@@ -1971,9 +1971,9 @@ let searchTimer;
 function bind() {
   app.onclick = async (e) => {
     if (e.target.closest("a[href]")) return;
-    const t = e.target.closest("[data-act],[data-pick],[data-fav],[data-like],[data-detail],[data-city],[data-country],[data-explore-city],[data-send-group],[data-route],[data-vote],[data-lang]");
-    if (!t) return;
-    const act = t.dataset.act;
+    const el = e.target.closest("[data-act],[data-pick],[data-fav],[data-like],[data-detail],[data-city],[data-country],[data-explore-city],[data-send-group],[data-route],[data-vote],[data-lang]");
+    if (!el) return;
+    const act = el.dataset.act;
     if (act === "intro-done") {
       state.intro = false;
       state.introArmed = false;
@@ -1981,8 +1981,8 @@ function bind() {
       render();
       return;
     }
-    if (t.dataset.lang) {
-      state.lang = t.dataset.lang;
+    if (el.dataset.lang) {
+      state.lang = el.dataset.lang;
       state.langQ = "";
       localStorage.setItem("sinki-lang", state.lang);
       applyDocumentLang();
@@ -1994,14 +1994,14 @@ function bind() {
     if (act === "set-profile") { state.settingsView = "profile"; state.profileHint = ""; render(); return; }
     if (act === "close-paywall") { state.paywall = false; state.billingHint = ""; render(); return; }
     if (act === "pay-family") {
-      state.payFamily = t.dataset.id || "plus";
+      state.payFamily = el.dataset.id || "plus";
       state.billingHint = "";
       render();
       return;
     }
     if (act === "pay-period") {
-      const family = t.dataset.family || "plus";
-      const period = t.dataset.id || "year";
+      const family = el.dataset.family || "plus";
+      const period = el.dataset.id || "year";
       if (family === "plus") {
         state.plusPeriod = period;
         localStorage.setItem("sinki-plus-period", period);
@@ -2012,7 +2012,7 @@ function bind() {
       render();
       return;
     }
-    if (act === "pay-buy") { await startPurchase(t.dataset.id); return; }
+    if (act === "pay-buy") { await startPurchase(el.dataset.id); return; }
     if (act === "pay-restore") { await restorePurchases(); return; }
     if (act === "plus-go") {
       openPaywall("catalog");
@@ -2063,16 +2063,16 @@ function bind() {
       return;
     }
     if (act === "event-boost") {
-      state.eventBoostDays = Number(t.dataset.id) || 0;
+      state.eventBoostDays = Number(el.dataset.id) || 0;
       render();
       return;
     }
     if (act === "event-approve") {
-      await reviewOrganizerEvent(t.dataset.id, "approve");
+      await reviewOrganizerEvent(el.dataset.id, "approve");
       return;
     }
     if (act === "event-reject") {
-      await reviewOrganizerEvent(t.dataset.id, "reject");
+      await reviewOrganizerEvent(el.dataset.id, "reject");
       return;
     }
     if (act === "event-next" || act === "event-save") {
@@ -2421,7 +2421,7 @@ function bind() {
     if (act === "plus") { state.people = Math.min(12, state.people + 1); render(); return; }
     if (act === "minus") { state.people = Math.max(1, state.people - 1); render(); return; }
     if (act === "alt") {
-      const alt = state.alts[Number(t.dataset.id)];
+      const alt = state.alts[Number(el.dataset.id)];
       if (!alt) return;
       if (alt.indoor) state.indoor = alt.indoor;
       if (alt.type) state.type = alt.type;
@@ -2492,20 +2492,20 @@ function bind() {
       state.screen = "plans";
       render(); return;
     }
-    if (act === "close-sheet") { if (e.target.classList.contains("sheet") || t.dataset.act === "close-sheet") { state.detail = null; render(); } return; }
-    if (t.dataset.pick) {
-      const key = t.dataset.pick;
-      let val = t.dataset.id;
+    if (act === "close-sheet") { if (e.target.classList.contains("sheet") || el.dataset.act === "close-sheet") { state.detail = null; render(); } return; }
+    if (el.dataset.pick) {
+      const key = el.dataset.pick;
+      let val = el.dataset.id;
       if (key === "radius") val = Number(val);
       state[key] = val;
       render(); return;
     }
-    if (t.dataset.like) {
-      await toggleEventLike(t.dataset.like);
+    if (el.dataset.like) {
+      await toggleEventLike(el.dataset.like);
       return;
     }
-    if (t.dataset.fav) {
-      const item = findOuting(t.dataset.fav);
+    if (el.dataset.fav) {
+      const item = findOuting(el.dataset.fav);
       if (!item) return;
       const exists = state.favs.some((x) => x.id === item.id);
       state.favs = exists ? state.favs.filter((x) => x.id !== item.id) : [item, ...state.favs];
@@ -2513,16 +2513,16 @@ function bind() {
       persistAccount();
       render(); return;
     }
-    if (t.dataset.detail) {
-      const item = findOuting(t.dataset.detail);
+    if (el.dataset.detail) {
+      const item = findOuting(el.dataset.detail);
       if (!item) return;
       state.detail = { ...item, storyBusy: !item.story && !isEventItem(item) };
       render();
       if (!item.story && !isEventItem(item)) loadPlaceStory(item);
       return;
     }
-    if (t.dataset.country) {
-      const c = JSON.parse(decodeURIComponent(t.dataset.country));
+    if (el.dataset.country) {
+      const c = JSON.parse(decodeURIComponent(el.dataset.country));
       if (state.screen === "settings" && state.settingsView === "home-country") {
         saveHomeCountry(c, true);
         state.settingsView = "menu";
@@ -2559,8 +2559,8 @@ function bind() {
       render();
       return;
     }
-    if (t.dataset.city) {
-      state.city = JSON.parse(decodeURIComponent(t.dataset.city));
+    if (el.dataset.city) {
+      state.city = JSON.parse(decodeURIComponent(el.dataset.city));
       state.query = state.city.name;
       state.suggestions = [];
       if (state.city.country_code && state.city.country_code !== "FR") {
@@ -2573,8 +2573,8 @@ function bind() {
       render();
       return;
     }
-    if (t.dataset.exploreCity) {
-      const c = JSON.parse(decodeURIComponent(t.dataset.exploreCity));
+    if (el.dataset.exploreCity) {
+      const c = JSON.parse(decodeURIComponent(el.dataset.exploreCity));
       if (state.exploreScope === "world") {
         state.exploreCity = c;
         state.exploreCityQ = c.name || "";
@@ -2587,19 +2587,19 @@ function bind() {
       await loadCityExplore(c);
       return;
     }
-    if (t.dataset.sendGroup) {
-      const item = findOuting(t.dataset.sendGroup);
+    if (el.dataset.sendGroup) {
+      const item = findOuting(el.dataset.sendGroup);
       await sendGroupMessage("On part là ?", item);
       state.screen = "group";
       render();
       return;
     }
-    if (t.dataset.vote) {
-      await voteOuting(t.dataset.vote);
+    if (el.dataset.vote) {
+      await voteOuting(el.dataset.vote);
       return;
     }
-    if (t.dataset.route) {
-      const item = findOuting(t.dataset.route);
+    if (el.dataset.route) {
+      const item = findOuting(el.dataset.route);
       if (item) await openDirections(item);
     }
   };
@@ -2682,7 +2682,7 @@ function bind() {
   const date = $("#date");
   if (date) date.onchange = () => { state.date = date.value; };
   const budget = $("#budget");
-  if (budget) budget.oninput = () => { state.unlimited = false; state.budget = Number(budget.value); $(".budget-val").textContent = state.budget === 0 ? "Gratuit" : state.budget + " € max"; };
+  if (budget) budget.oninput = () => { state.unlimited = false; state.budget = Number(budget.value); $(".budget-val").textContent = state.budget === 0 ? t("free") : t("budget_max", { n: state.budget }); };
   const exploreq = $("#exploreq");
   if (exploreq) {
     exploreq.oninput = () => {
@@ -3101,6 +3101,23 @@ function matchesType(item, type) {
   if (type === "randonnee") return cat === "Randonnées";
   return true;
 }
+function outingPriceEur(item) {
+  if (item.price_eur != null && Number.isFinite(Number(item.price_eur))) return Number(item.price_eur);
+  const p = Number(item.price_min);
+  return Number.isFinite(p) ? p : null;
+}
+function respectsMandatoryFilters(item) {
+  if (state.type && state.type !== "all" && !matchesType(item, state.type)) return false;
+  if (state.indoor === "in" && item.indoor === false) return false;
+  if (state.indoor === "out" && item.indoor === true) return false;
+  if (!state.unlimited && state.type !== "shopping" && state.type !== "randonnee") {
+    if (item.price_unknown) return Number(state.budget) > 0;
+    const price = outingPriceEur(item);
+    if (price == null) return Number(state.budget) > 0;
+    if (price > Number(state.budget)) return false;
+  }
+  return true;
+}
 
 async function fetchOutingRows(opts) {
   const qs = new URLSearchParams({
@@ -3139,43 +3156,15 @@ async function runSearch() {
       fetchOutingRows({}),
       fetch("/api/weather?lat=" + state.city.latitude + "&lon=" + state.city.longitude),
     ]);
-    let rows = rows0;
-    const cityName = state.city?.name || "ici";
+    const rows = rows0;
     const alts = [];
-    const usedType = rows.some((o) => o.search_relax === "type") ? "all" : state.type;
     if (state.indoor !== "any") alts.push({ label: t("alt_in"), indoor: "any" });
     if (state.type !== "all") alts.push({ label: t("alt_all"), type: "all" });
     if (!state.unlimited) alts.push({ label: t("alt_budget"), unlimited: true });
     if (state.radius < 80) alts.push({ label: t("alt_far"), radius: 80, indoor: "any", type: "all" });
-    if (!rows.length && state.indoor !== "any") {
-      rows = await fetchOutingRows({ indoor: "any" });
-      if (rows.length) state.searchNote = t("note_out", { city: cityName });
-    }
-    if (!rows.length && state.type !== "all") {
-      rows = await fetchOutingRows({ indoor: "any", type: "all" });
-      if (rows.length) state.searchNote = t("note_type", { city: cityName });
-    }
-    if (!rows.length && !state.unlimited) {
-      rows = await fetchOutingRows({ indoor: "any", type: "all", unlimited: true });
-      if (rows.length) state.searchNote = t("note_budget", { city: cityName });
-    }
-    if (!rows.length && state.radius < 80) {
-      rows = await fetchOutingRows({ indoor: "any", type: "all", unlimited: true, radius: 80 });
-      if (rows.length) state.searchNote = t("note_far", { city: cityName });
-    }
-    const typeForMatch = rows.some((o) => o.search_relax === "type") ? "all" : usedType;
-    const relaxIndoor = rows.some((o) => o.search_relax === "indoor");
-    if (relaxIndoor && !state.searchNote) {
-      state.searchNote = t("note_out2");
-    }
-    if (typeForMatch === "all" && state.type !== "all" && rows.length && !state.searchNote) {
-      state.searchNote = t("note_type2", { city: cityName });
-    }
-    if (rows.some((o) => o.search_relax === "city") && !state.searchNote) {
-      state.searchNote = t("note_city", { city: cityName });
-    }
-    state.alts = (!rows.length || state.searchNote) ? alts : [];
-    state.pool = rows.filter((o) => typeForMatch === "all" || matchesType(o, typeForMatch));
+    state.pool = rows.filter(respectsMandatoryFilters);
+    state.searchNote = "";
+    state.alts = state.pool.length ? [] : alts;
     state.nearestFallback = state.pool.some((o) => o.search_fallback === "nearest");
     if (state.nearestFallback) state.pool.sort((a, b) => (a.distance_km ?? 99) - (b.distance_km ?? 99));
     state.results = recordFound(pickThree(state.pool, state.type === "soirees" ? "party" : state.vibe));
@@ -3270,12 +3259,16 @@ async function verifyLoginCode() {
 }
 
 function logoutAccount() {
+  const headers = authHeaders();
   state.account = null;
   state.session = null;
   state.authView = "closed";
   state.accountDeleteAsk = false;
   localStorage.removeItem("sinki-session");
   localStorage.removeItem("sinki-account");
+  if (headers.Authorization) {
+    fetch("/api/auth/logout", { method: "POST", headers }).catch(() => {});
+  }
   render();
 }
 

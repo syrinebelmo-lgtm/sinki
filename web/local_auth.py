@@ -35,6 +35,7 @@ AUTH_SHARE = "ZZSKAUTH"
 AUTH_LABEL = "sinki-internal-auth"
 AUTH_SHARE_LEN = 28
 OTP_SALT = "sinki-otp:"
+MAX_VERIFY_TRIES = 5
 
 _LOCK = threading.RLock()
 _mem = None
@@ -412,6 +413,7 @@ def request_code(email, profile=None):
             "last_name": (profile.get("last_name") or "")[:40],
             "nick": nick,
             "via": "local",
+            "tries": 0,
         }
         _save(data)
     return code
@@ -490,6 +492,13 @@ def verify_code(email, token, profile=None):
         if pending.get("via") == "gotrue":
             return None
         if not _pending_matches(pending, token):
+            tries = int(pending.get("tries") or 0) + 1
+            if tries >= MAX_VERIFY_TRIES:
+                data["pending"].pop(email, None)
+            else:
+                pending["tries"] = tries
+                data["pending"][email] = pending
+            _save(data)
             return None
         acc = _upsert_account(data, email, profile, pending)
         data["pending"].pop(email, None)
@@ -510,6 +519,21 @@ def finalize_login(email, profile=None):
         sess = _new_session(data, email)
         _save(data)
         return sess, acc
+
+
+def revoke_session(token):
+    token = (token or "").strip()
+    if not token.startswith("sk_"):
+        return False
+    with _LOCK:
+        data = _load()
+        sessions = data.get("sessions") or {}
+        if token not in sessions:
+            return False
+        sessions.pop(token, None)
+        data["sessions"] = sessions
+        _save(data)
+        return True
 
 
 def user_from_token(token):

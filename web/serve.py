@@ -1590,9 +1590,9 @@ def search_catalog(q, country=""):
 
 
 def create_group(name):
-    import random
+    import secrets
     import string
-    code = "".join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+    code = "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
     rows = supabase_request(
         "POST",
         "groups",
@@ -2267,9 +2267,24 @@ def gotrue_email_exists(email):
     return False
 
 
+_OTP_SENDS = {}
+
+
+def otp_send_limited(email):
+    now = time.time()
+    window = _OTP_SENDS.setdefault(email, [])
+    window[:] = [stamp for stamp in window if now - stamp < 15 * 60]
+    if len(window) >= 5:
+        return True
+    window.append(now)
+    return False
+
+
 def send_login_code(body, host_header=""):
     body = body if isinstance(body, dict) else {"email": body}
     email = auth_identity(body)
+    if otp_send_limited(email):
+        raise ValueError("Trop de codes d’un coup. Attends environ 15 minutes.")
     mode = str(body.get("mode") or "").strip().lower()
     exists = local_auth.email_has_account(email)
     if mode == "signup" and exists:
@@ -3055,7 +3070,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 106, "mail": mail_health()}
+                payload = {"ok": True, "app": "sinki", "v": 107, "mail": mail_health()}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
@@ -3102,7 +3117,10 @@ class Handler(SimpleHTTPRequestHandler):
                     body = self.json_body()
                     payload = event_store.review_event(body.get("id") or qs_id, body.get("action") or action)
                 else:
-                    row = event_store.review_event(qs_id, action, token)
+                    if not token:
+                        self.send_json({"error": "interdit"}, 403)
+                        return
+                    row = event_store.review_event(qs_id, action, token, require_token=True)
                     ok = row.get("status") == "approved"
                     title = "Événement validé" if ok else "Événement refusé"
                     note = "Il est boosté 24 h dans Explorer." if ok else "Il n’apparaîtra pas dans l’app."
@@ -3166,6 +3184,12 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/auth/verify" and post:
                 body = self.json_body()
                 payload = verify_login_code(body)
+            elif path == "/api/auth/logout" and post:
+                raw = (self.headers.get("Authorization") or "").strip()
+                token = raw.split(" ", 1)[1].strip() if raw.lower().startswith("bearer ") else ""
+                if token:
+                    local_auth.revoke_session(token)
+                payload = {"ok": True}
             elif path == "/api/me":
                 user = user_from_bearer(self.headers.get("Authorization"))
                 if not user:
@@ -3244,8 +3268,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json({"error": "La recherche a pris trop de temps. Réessaie."}, 503)
                 return
             self.send_json({"error": "Erreur serveur"}, exc.code if exc.code < 500 else 502)
-        except Exception as exc:
-            self.send_json({"error": str(exc)}, 500)
+        except Exception:
+            self.send_json({"error": "Erreur serveur"}, 500)
 
 
 def main():

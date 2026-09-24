@@ -260,7 +260,7 @@ def get_event(eid):
     return None
 
 
-def review_event(eid, action, token=""):
+def review_event(eid, action, token="", require_token=False):
     action = (action or "").strip().lower()
     if action not in ("approve", "reject"):
         raise ValueError("action")
@@ -272,8 +272,9 @@ def review_event(eid, action, token=""):
             break
     if not found:
         raise ValueError("introuvable")
-    if token and token != found.get("token"):
-        raise ValueError("lien")
+    if require_token or token:
+        if token != found.get("token"):
+            raise ValueError("lien")
     found["status"] = "approved" if action == "approve" else "rejected"
     if action == "approve":
         extra = int(found.get("extra_boost_days") or 0)
