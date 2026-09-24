@@ -301,6 +301,36 @@ def extra_country_hubs(featured_cc):
     return hubs
 
 
+def catalog_country_codes():
+    codes = set(REST_OSM) | set(EURO) | {
+        "CH", "GB", "US", "JP", "CA", "TH", "MA", "NO", "SE", "DK", "PL", "RO",
+        "BG", "RS", "BA", "AL", "MK", "MD", "IS", "LI", "HU", "CZ", "ME", "XK",
+    }
+    codes.discard("FR")
+    return sorted(codes)
+
+
+def fetch_cities_cc_cap(url, service_role, cc, cap=10):
+    q = (
+        url.rstrip("/")
+        + "/rest/v1/cities?select=id,slug,name,latitude,longitude,country_code"
+        + "&country_code=eq."
+        + urllib.parse.quote(cc)
+        + "&latitude=not.is.null"
+        + "&order=id.asc&limit="
+        + str(cap)
+    )
+    req = urllib.request.Request(
+        q,
+        headers={
+            "apikey": service_role,
+            "Authorization": "Bearer " + service_role,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=90) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
 def recategorize_culture_shows(url, service_role):
     needles = (
         "concert",
@@ -501,6 +531,7 @@ def main():
     parser.add_argument("--all-hubs", action="store_true")
     parser.add_argument("--france-area", action="store_true")
     parser.add_argument("--world", action="store_true")
+    parser.add_argument("--catalog", action="store_true")
     parser.add_argument("--recategorize-culture", action="store_true")
     parser.add_argument("--radius-m", type=int, default=12000)
     args = parser.parse_args()
@@ -513,17 +544,22 @@ def main():
 
     if args.recategorize_culture:
         recategorize_world(url, service_role)
-        if not (args.world or args.france_area or args.all_hubs or args.hub):
+        if not (args.world or args.france_area or args.all_hubs or args.hub or args.catalog):
             return
 
-    fr_cities = fetch_all(
-        url,
-        service_role,
-        "cities",
-        "id,slug,name,latitude,longitude,country_code",
-        extra="&country_code=eq.FR",
+    need_fr = args.france_area or args.all_hubs or args.hub or args.world or not (
+        args.world or args.france_area or args.recategorize_culture or args.catalog
     )
-    fr_cities = [row for row in fr_cities if row.get("latitude") is not None]
+    fr_cities = []
+    if need_fr:
+        fr_cities = fetch_all(
+            url,
+            service_role,
+            "cities",
+            "id,slug,name,latitude,longitude,country_code",
+            extra="&country_code=eq.FR",
+        )
+        fr_cities = [row for row in fr_cities if row.get("latitude") is not None]
 
     if args.france_area:
         elements = fetch_france_clubs()
@@ -556,7 +592,9 @@ def main():
         if not hubs:
             raise SystemExit("hub inconnu: " + args.hub)
 
-    if args.hub or args.all_hubs or not (args.world or args.france_area or args.recategorize_culture):
+    if args.hub or args.all_hubs or not (
+        args.world or args.france_area or args.recategorize_culture or args.catalog
+    ):
         items = []
         for el in collect_elements(hubs, args.radius_m, clubs_only=False):
             item = osm_to_night(el, True)
@@ -583,6 +621,34 @@ def main():
         print("convertis world", len(items), flush=True)
         payload, skipped, clubs = build_payload(items, pin_cities, False)
         print("importables nightlife world", len(payload), "boites", clubs, "ignorés", skipped, flush=True)
+        if payload:
+            upsert_outings(url, service_role, payload)
+
+    if args.catalog:
+        pin = []
+        hubs_c = []
+        for cc in catalog_country_codes():
+            try:
+                rows = fetch_cities_cc_cap(url, service_role, cc, 10)
+            except Exception as exc:
+                print("catalog cities fail", cc, exc, flush=True)
+                continue
+            rows = [row for row in rows if row.get("latitude") is not None]
+            print("catalog", cc, "villes", len(rows), flush=True)
+            pin.extend(rows)
+            for row in rows:
+                hubs_c.append(
+                    ((row.get("name") or cc) + " " + cc, row["latitude"], row["longitude"])
+                )
+        print("catalog hubs", len(hubs_c), "pin", len(pin), flush=True)
+        items = []
+        for el in collect_elements(hubs_c, args.radius_m, clubs_only=True):
+            item = osm_to_night(el, False)
+            if item:
+                items.append(item)
+        print("convertis catalog", len(items), flush=True)
+        payload, skipped, clubs = build_payload(items, pin, False)
+        print("importables nightlife catalog", len(payload), "boites", clubs, "ignorés", skipped, flush=True)
         if payload:
             upsert_outings(url, service_role, payload)
 
