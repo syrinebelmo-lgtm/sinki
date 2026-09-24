@@ -496,7 +496,8 @@ html[dir="rtl"] .set-row { text-align: right; }
 }
 .pay-badge { background: var(--forest); color: #fff; }
 .pay-save { background: var(--sand); color: var(--forest); }
-.pay-sheet .row { margin: 8px 0 12px; }
+.pay-sheet .row, .quota-limit .row { margin: 8px 0 12px; }
+.quota-limit { margin-top: 4px; }
 .alts { margin: 8px 0 16px; }
 .alts .hint { margin-bottom: 8px; }
 
