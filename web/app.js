@@ -1240,8 +1240,10 @@ function friendlyAuthError(err) {
   if (s.includes("email_exists") || s.includes("already been registered") || s.includes("déjà un compte")) return t("err_mail_taken");
   if (s.includes("Aucun compte") || s.includes("no account")) return t("err_no_account");
   if (s.includes("déjà pris") || s.includes("already taken") || s === "taken") return t("err_pseudo_taken");
+  if (/rate|over_email_send|Trop de codes/i.test(s)) return t("err_mail_rate");
+  if (/RESEND_API_KEY|Resend|SMTP bloqué|n’est pas configuré|n'est pas configuré/i.test(s)) return s;
   if (s.trim().startsWith("{")) return t("err_send_code");
-  return s;
+  return s || t("err_send_code");
 }
 function validEmail(v) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
@@ -1543,7 +1545,7 @@ function accountPage() {
       <div class="account-card">
         <label>${t("auth_code")}</label>
         <input type="text" id="authcode" inputmode="numeric" autocomplete="one-time-code" placeholder="••••••" value="" />
-        <p class="hint">${t("sent_to", { email: state.authEmail })}</p>
+        <p class="hint">${escapeHtml(state.authHint || t("sent_to", { email: state.authEmail }))}</p>
         ${err}
         <button class="btn stack-gap" data-act="auth-verify" ${state.authBusy ? "disabled" : ""}>${state.authBusy ? t("verifying") : t("verify")}</button>
         <button class="ghost" data-act="auth-open">${t("change_email")}</button>
@@ -3215,7 +3217,7 @@ async function sendLoginCode() {
     const data = await r.json();
     if (!r.ok) throw new Error(friendlyAuthError(data.error || t("err_send_code")));
     state.authView = "code";
-    state.authHint = "";
+    state.authHint = data.email_note || t("sent_to", { email: state.authEmail });
     state.authCode = "";
   } catch (err) {
     state.authError = String(err.message || err);

@@ -18,4 +18,4 @@ services:
       - key: RESEND_API_KEY
         sync: false
       - key: MAIL_FROM
-        value: Sinki <beth.t@example.com>
+        value: Sinki <onboarding@resend.dev>
