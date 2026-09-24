@@ -1740,7 +1740,7 @@ function render() {
       <h1>${t("home_title")}</h1>
       ${quotaStatusHtml()}
       <button class="choice featured" data-act="start"><h3>${t("home_cta")}</h3></button>
-      ${last?.city ? `<button class="btn secondary" data-act="resume">↻ ${t("resume")}<small>${escapeHtml(last.city.name)} · ${last.budget == null ? t("budget_free") : t("budget_max", { n: last.budget })} · ${escapeHtml(vibeLabel)}</small></button>` : ""}
+      ${last?.city ? `<button class="btn secondary" data-act="resume">↻ ${t("resume")} <small>${escapeHtml(last.city.name)} · ${last.budget == null ? t("budget_free") : t("budget_max", { n: last.budget })} · ${escapeHtml(vibeLabel)}</small></button>` : ""}
       ${navHtml("home")}
     </div>`;
   } else if (state.screen === "settings") {

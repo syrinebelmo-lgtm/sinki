@@ -131,6 +131,13 @@ h1 { font-family: inherit; font-size: 28px; font-weight: 700; line-height: 1.15;
   font-size: 17px; font-weight: 600; margin-bottom: 10px; text-decoration: none; text-align: center;
 }
 .btn.secondary { background: var(--sage); color: var(--forest); }
+.btn[data-act="resume"] small {
+  display: block;
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  opacity: 0.85;
+}
 .geo-btn { margin-top: 12px; position: relative; z-index: 3; pointer-events: auto; }
 .btn.sand { background: var(--sand); color: var(--ink); }
 .btn.outline { background: #fff; color: var(--ink); border: 1.5px solid var(--line); }
