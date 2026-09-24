@@ -3020,12 +3020,19 @@ function applyLast() {
   });
 }
 
+function isCultureShow(item) {
+  const club = /bo[iî]te|nightclub|discoth|club de nuit|dancing|karaoke|rooftop/i;
+  if (club.test(item.name || "")) return false;
+  const blob = [item.name, item.description].join(" ");
+  return /\b(concert|cabaret|jazz|op[eé]ra|ballet|th[eé][aâ]tre|theatre|philharmonie|spectacle|moulin rouge|paradis latin|new morning)\b/i.test(blob);
+}
 function isNightlifeItem(item) {
   const cat = item.category || "";
   if (cat === "Shopping" || cat === "Lieux gratuits et balades" || cat === "Randonnées" || cat === "Musées et culture") return false;
+  if (isCultureShow(item)) return false;
   const blob = [item.name, item.description, item.category, item.kind].join(" ");
-  const keep = /\b(bo[iî]te(?:\s+de\s+nuit)?|nightclub|night\s*club|discoth[eè]que|karaoke|karaok[ée]|rooftop|afterwork|cabaret|jazz|techno|electro|dancing|dj\b|moulin rouge|paradis latin|new morning|soir[eé]e\s+dansante|bal\s+populaire|guinguette|club\s+de\s+nuit|bar|pub|lounge|cocktail)\b/i;
-  const drop = /\b(op[eé]ra|ballet|accor arena|jeune public|enfance|enfant|enfants|kids|children|young spectator|scolaire|maternelle|petite enfance|tout[-\s]?petit|for young|exposition|exhibition|r[eé]trospective|salon international|mus[eé]e|museum|photographe|peinture|painting|cin[eé]ma|cinema|film|s[eé]ance|dinosaure|coffee show|agriculture|alchimiste|poney\s*club|centre [eé]questre|balade|visite en famille|\ben famille\b|petit train|galerie|vestiaire|haute couture)\b/i;
+  const keep = /\b(bo[iî]te(?:\s+de\s+nuit)?|nightclub|night\s*club|discoth[eè]que|karaoke|karaok[ée]|rooftop|afterwork|techno|electro|dancing|dj\b|soir[eé]e\s+dansante|bal\s+populaire|guinguette|club\s+de\s+nuit|bar|pub|lounge|cocktail)\b/i;
+  const drop = /\b(op[eé]ra|ballet|accor arena|jeune public|enfance|enfant|enfants|kids|children|young spectator|scolaire|maternelle|petite enfance|tout[-\s]?petit|for young|exposition|exhibition|r[eé]trospective|salon international|mus[eé]e|museum|photographe|peinture|painting|cin[eé]ma|cinema|film|s[eé]ance|dinosaure|coffee show|agriculture|alchimiste|poney\s*club|centre [eé]questre|balade|visite en famille|\ben famille\b|petit train|galerie|vestiaire|haute couture|concert|cabaret|jazz|th[eé][aâ]tre|theatre|philharmonie|spectacle|conservatoire|école de danse|ecole de danse|studio de danse)\b/i;
   const desc = String(item.description || "").trim();
   if (drop.test(blob) && !keep.test(item.name || "")) return false;
   if (keep.test(item.name || "")) return true;
@@ -3042,7 +3049,7 @@ function matchesType(item, type) {
   if (type === "evenements") return kind === "event";
   if (type === "balades") return cat === "Lieux gratuits et balades" || cat === "Randonnées";
   if (type === "soirees") return isNightlifeItem(item);
-  if (type === "culture") return cat === "Musées et culture";
+  if (type === "culture") return cat === "Musées et culture" || isCultureShow(item);
   if (type === "randonnee") return cat === "Randonnées";
   return true;
 }

@@ -4,6 +4,7 @@ import os
 import socket
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 UPSERT_BATCH = 80
@@ -106,6 +107,18 @@ def to_outing_row(item, city_id):
         "source_url": item.get("source_url"),
         "is_active": True,
     }
+
+
+def patch_outing_fields(url, service_role, outing_id, fields):
+    body = json.dumps(fields).encode("utf-8")
+    req = urllib.request.Request(
+        url.rstrip("/") + "/rest/v1/outings?id=eq." + urllib.parse.quote(str(outing_id)),
+        data=body,
+        headers=_headers(service_role),
+        method="PATCH",
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        resp.read()
 
 
 def upsert_outings(url, service_role, rows):

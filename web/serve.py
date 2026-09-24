@@ -49,6 +49,25 @@ def load_env():
             os.environ.setdefault(key.strip(), val.strip())
 
 
+def store_links():
+    ios = (os.environ.get("APP_STORE_URL") or "").strip()
+    android = (os.environ.get("PLAY_STORE_URL") or "").strip()
+    path = os.path.join(ROOT, "stores.json")
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh) or {}
+            ios = ios or str(data.get("ios") or "").strip()
+            android = android or str(data.get("android") or "").strip()
+        except (OSError, ValueError):
+            pass
+    if ios and not ios.startswith("https://"):
+        ios = ""
+    if android and not android.startswith("https://"):
+        android = ""
+    return {"ios": ios, "android": android}
+
+
 def scrub_env():
     for name in ("SUPABASE_SERVICE_ROLE", "SUPABASE_URL", "RESEND_API_KEY"):
         raw = os.environ.get(name) or ""
@@ -72,22 +91,26 @@ PHONE_MAIL_DOMAIN = "phone.sinki.app"
 PHONE_DIGITS_RE = re.compile(r"^\d{8,15}$")
 NIGHT_NAME = re.compile(
     r"\b(bar|pub|club|night|karaoke|karaok[eé]|lounge|disco|discoth|"
-    r"beer|cocktail|tapas|rooftop|bo[iî]te|cabaret|"
-    r"jazz|techno|electro|dancing|afterwork|"
+    r"beer|cocktail|tapas|rooftop|bo[iî]te|"
+    r"techno|electro|dancing|afterwork|"
     r"guinguette|soir[eé]e dansante)\b",
     re.I,
 )
 NIGHT_KEEP = re.compile(
     r"\b(bo[iî]te(?:\s+de\s+nuit)?|nightclub|night\s*club|discoth[eè]que|"
     r"karaoke|karaok[eé]|rooftop|afterwork|"
-    r"cabaret|jazz|techno|electro|"
-    r"dancing|dj\b|moulin rouge|"
-    r"paradis latin|new morning|"
+    r"techno|electro|"
+    r"dancing|dj\b|"
     r"soir[eé]e\s+dansante|bal\s+populaire|guinguette|club\s+de\s+nuit)\b",
     re.I,
 )
 NIGHT_CLUB = re.compile(
     r"bo[iî]te|nightclub|discoth|club de nuit|dancing|karaoke|rooftop",
+    re.I,
+)
+CULTURE_SHOW = re.compile(
+    r"\b(concert|cabaret|jazz|op[eé]ra|ballet|th[eé][aâ]tre|theatre|"
+    r"philharmonie|spectacle|moulin rouge|paradis latin|new morning)\b",
     re.I,
 )
 NIGHT_DROP = re.compile(
@@ -99,7 +122,9 @@ NIGHT_DROP = re.compile(
     r"dinosaure|coffee show|agriculture|alchimiste|"
     r"poney\s*club|centre [eé]questre|balade|"
     r"visite en famille|\ben famille\b|petit train|"
-    r"galerie|vestiaire|mode en majest|haute couture)\b",
+    r"galerie|vestiaire|mode en majest|haute couture|"
+    r"concert|cabaret|jazz|th[eé][aâ]tre|theatre|philharmonie|spectacle|"
+    r"conservatoire|école de danse|ecole de danse|studio de danse|centre .{0,24}danse)\b",
     re.I,
 )
 TO_EUR = {
@@ -334,8 +359,18 @@ def outing_blob(row):
     )
 
 
+def is_culture_show(row):
+    name = row.get("name") or ""
+    blob = outing_blob(row)
+    if NIGHT_CLUB.search(name):
+        return False
+    return bool(CULTURE_SHOW.search(blob))
+
+
 def is_nightlife(row):
     if (row.get("category") or "") in (CAT_SHOP, CAT_WALK, CAT_HIKE, CAT_CULT):
+        return False
+    if is_culture_show(row):
         return False
     name = row.get("name") or ""
     blob = outing_blob(row)
@@ -1082,6 +1117,14 @@ def fetch_outings(params):
     elif typ == "soirees":
         type_cat = "Soirées et concerts"
     type_filter = ("&category=eq." + urllib.parse.quote(type_cat)) if type_cat else ""
+    if typ == "culture":
+        type_filter = (
+            "&or=(category.eq."
+            + urllib.parse.quote(CAT_CULT)
+            + ",category.eq."
+            + urllib.parse.quote(CAT_NIGHT)
+            + ")"
+        )
 
     def geo_rows(km, pictured_only=False):
         found = []
@@ -1179,8 +1222,11 @@ def fetch_outings(params):
         if typ == "soirees":
             if not is_nightlife(row):
                 return False
-        if typ == "culture" and cat != "Musées et culture":
-            return False
+        if typ == "culture":
+            if is_nightlife(row):
+                return False
+            if cat != CAT_CULT and not is_culture_show(row):
+                return False
         if typ == "shopping" and cat != "Shopping":
             return False
         if indoor == "in" and row.get("indoor") is False:
@@ -2676,6 +2722,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
+        path_only = parsed.path.rstrip("/") or "/"
         if parsed.path.startswith("/api/"):
             return self.handle_api(parsed)
         hit = AVATAR_FILE_RE.match(parsed.path)
@@ -2704,8 +2751,12 @@ class Handler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(blob)
             return
-        if parsed.path == "/":
+        if path_only == "/":
             self.path = "/index.html"
+        elif path_only in ("/download", "/get", "/app"):
+            self.path = "/download.html"
+        elif path_only in ("/flyer", "/flyer-print"):
+            self.path = "/flyer.html"
         return super().do_GET()
 
     def do_POST(self):
@@ -2746,7 +2797,7 @@ class Handler(SimpleHTTPRequestHandler):
     def end_headers(self):
         if not self.path.startswith("/api/"):
             self.send_header("Permissions-Policy", "geolocation=(self)")
-            if self.path.startswith("/index.html") or self.path in ("/", "/app.js", "/i18n.js", "/styles.css") or "/app.js?" in self.path or "/i18n.js?" in self.path or "/styles.css?" in self.path:
+            if self.path.startswith("/index.html") or self.path.startswith("/download.html") or self.path in ("/", "/app.js", "/i18n.js", "/styles.css") or "/app.js?" in self.path or "/i18n.js?" in self.path or "/styles.css?" in self.path:
                 self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
@@ -2794,8 +2845,10 @@ class Handler(SimpleHTTPRequestHandler):
                 payload = get_group((qs.get("code") or [""])[0]) or {"error": "introuvable"}
             elif path == "/api/place-story":
                 payload = place_story(qs)
+            elif path == "/api/stores":
+                payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 98}
+                payload = {"ok": True, "app": "sinki", "v": 100}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
