@@ -3129,6 +3129,8 @@ function respectsMandatoryFilters(item) {
   return true;
 }
 
+const outingsInflight = new Map();
+
 async function fetchOutingRows(opts) {
   const qs = new URLSearchParams({
     lat: String(state.city.latitude),
@@ -3141,16 +3143,27 @@ async function fetchOutingRows(opts) {
   const unlimited = opts.unlimited ?? state.unlimited;
   const typ = opts.type ?? state.type;
   if (!unlimited && typ !== "shopping" && typ !== "randonnee") qs.set("budget", String(state.budget));
-  const outRes = await fetch("/api/outings?" + qs.toString());
-  const rows = await outRes.json();
-  if (!outRes.ok || !Array.isArray(rows)) {
-    const raw = (rows && (rows.error || rows.message)) || "";
-    const txt = typeof raw === "string" ? raw : "";
-    if (txt.includes("57014") || txt.toLowerCase().includes("timeout"))
-      throw new Error(t("err_timeout"));
-    throw new Error(t("err_load"));
+  const key = qs.toString();
+  const pending = outingsInflight.get(key);
+  if (pending) return pending;
+  const job = (async () => {
+    const outRes = await fetch("/api/outings?" + key);
+    const rows = await outRes.json();
+    if (!outRes.ok || !Array.isArray(rows)) {
+      const raw = (rows && (rows.error || rows.message)) || "";
+      const txt = typeof raw === "string" ? raw : "";
+      if (txt.includes("57014") || txt.toLowerCase().includes("timeout"))
+        throw new Error(t("err_timeout"));
+      throw new Error(t("err_load"));
+    }
+    return rows.map(normalizeOuting);
+  })();
+  outingsInflight.set(key, job);
+  try {
+    return await job;
+  } finally {
+    outingsInflight.delete(key);
   }
-  return rows.map(normalizeOuting);
 }
 
 async function runSearch() {
