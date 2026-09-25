@@ -1950,7 +1950,6 @@ def auth_error_code(payload):
 
 
 SEND_FAILED = "Impossible d’envoyer le code. Réessaie."
-MAIL_NOT_CONFIGURED = "L’envoi de mail n’est pas configuré. Réessaie plus tard, ou contacte l’aide dans Réglages."
 SUPPORT_TO = "thesinkiisinki@gmail.com"
 MAIL_TIMEOUT = 6
 
@@ -2025,9 +2024,9 @@ def friendly_auth_error(payload, raw="", extra=""):
     if "rate" in blob or "over_request" in blob or "over_email_send" in blob:
         return otp_rate_error(rate_wait_sec(payload, raw))
     if "otp_disabled" in blob or "signups not allowed" in blob:
-        return MAIL_NOT_CONFIGURED
+        return SEND_FAILED
     if "database error" in blob or "unexpected_failure" in blob:
-        return MAIL_NOT_CONFIGURED
+        return SEND_FAILED
     if "invalid" in blob and "email" in blob:
         return "Email invalide."
     return SEND_FAILED
@@ -2478,8 +2477,8 @@ def send_login_code(body, host_header=""):
             payload, raw = http_error_body(exc)
             raise ValueError(friendly_auth_error(payload, raw))
         except Exception:
-            raise ValueError(MAIL_NOT_CONFIGURED)
-    raise ValueError(MAIL_NOT_CONFIGURED)
+            raise ValueError(SEND_FAILED)
+    raise ValueError(SEND_FAILED)
 
 
 _SUPPORT_SENDS = {}
@@ -3334,7 +3333,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 115, "mail": mail_health()}
+                payload = {"ok": True, "app": "sinki", "v": 116, "mail": mail_health()}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":

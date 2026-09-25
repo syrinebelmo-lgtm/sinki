@@ -1272,8 +1272,7 @@ function friendlyAuthError(err) {
     if (/heure|hour/i.test(s)) return t("err_mail_rate_hour");
     return t("err_mail_rate", { min: 15 });
   }
-  if (/n’est pas configuré|n'est pas configuré|isn’t configured|is not configured/i.test(s)) return t("err_mail_off");
-  if (/RESEND_API_KEY|Resend|SMTP bloqué/i.test(s)) return s;
+  if (/n’est pas configuré|n'est pas configuré|isn’t configured|is not configured|pas de Resend|no Resend|RESEND_API_KEY|Resend|thesinkiisinki|SMTP bloqué/i.test(s)) return t("err_send_code");
   if (s.trim().startsWith("{")) return t("err_send_code");
   return s || t("err_send_code");
 }
