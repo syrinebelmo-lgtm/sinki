@@ -3517,6 +3517,7 @@ async function startPurchase(productId) {
   if (!state.session?.access_token) {
     state.paywall = false;
     state.screen = "account";
+    state.authError = "";
     state.authHint = t("plus_need_account");
     render();
     return;
@@ -3550,6 +3551,7 @@ async function startPurchase(productId) {
 async function restorePurchases() {
   if (!state.session?.access_token) {
     state.screen = "account";
+    state.authError = "";
     state.authHint = t("plus_need_account");
     state.paywall = false;
     render();
