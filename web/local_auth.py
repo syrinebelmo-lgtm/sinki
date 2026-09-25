@@ -37,9 +37,24 @@ AUTH_SHARE = "ZZSKAUTH"
 AUTH_LABEL = "sinki-internal-auth"
 AUTH_SHARE_LEN = 28
 OTP_SALT = "sinki-otp:"
-OTP_SEND_WINDOW = 15 * 60
+OTP_SEND_WINDOW = 2 * 60
 OTP_SEND_MAX = 5
-OTP_LOCK_KEYS = ("sends", "otp_sends", "otp_at", "rate_lock", "locked_until", "last_otp", "mail_sends")
+OTP_WAIT_CAP = 2 * 60
+OTP_LOCK_KEYS = (
+    "sends",
+    "otp_sends",
+    "otp_at",
+    "rate_lock",
+    "locked_until",
+    "lock_until",
+    "last_otp",
+    "mail_sends",
+    "otp_lock",
+    "send_lock",
+    "rate_until",
+    "blocked_until",
+    "cooldown",
+)
 MAX_VERIFY_TRIES = 5
 AVATAR_EXTS = ("jpg", "jpeg", "png", "webp")
 AVATAR_MIME = {
@@ -464,7 +479,7 @@ def otp_send_status(email):
                 stamps.append(val)
     if len(stamps) >= OTP_SEND_MAX:
         wait = OTP_SEND_WINDOW - (now - min(stamps))
-        return True, max(1, int(math.ceil(wait)))
+        return True, max(1, min(OTP_WAIT_CAP, int(math.ceil(wait))))
     return False, 0
 
 
@@ -490,6 +505,17 @@ def record_otp_send(email):
         _save(data)
 
 
+def _strip_lock_fields(row):
+    extra = 0
+    if not isinstance(row, dict):
+        return extra
+    for key in OTP_LOCK_KEYS:
+        if key in row:
+            row.pop(key, None)
+            extra += 1
+    return extra
+
+
 def clear_otp_sends(email):
     """Drop the send window and any lock fields for one account. Never log the email."""
     email = normalize_email(email)
@@ -499,20 +525,29 @@ def clear_otp_sends(email):
         data = _load()
         stamps = (data.get("otp_sends") or {}).pop(email, None) or []
         extra = 0
-        acc = (data.get("accounts") or {}).get(email)
-        if isinstance(acc, dict):
-            for key in OTP_LOCK_KEYS:
-                if key in acc:
-                    acc.pop(key, None)
-                    extra += 1
-        pending = (data.get("pending") or {}).get(email)
-        if isinstance(pending, dict):
-            for key in OTP_LOCK_KEYS:
-                if key in pending:
-                    pending.pop(key, None)
-                    extra += 1
+        extra += _strip_lock_fields((data.get("accounts") or {}).get(email))
+        extra += _strip_lock_fields((data.get("pending") or {}).get(email))
         _save(data)
         return {"cleared": True, "had_sends": len(stamps), "extra_keys": extra}
+
+
+def clear_all_otp_locks():
+    """Drop send windows and lock fields for every account. Does not delete accounts."""
+    with _LOCK:
+        data = _load()
+        send_rows = len(data.get("otp_sends") or {})
+        data["otp_sends"] = {}
+        extra = 0
+        for acc in (data.get("accounts") or {}).values():
+            extra += _strip_lock_fields(acc)
+        for pending in (data.get("pending") or {}).values():
+            extra += _strip_lock_fields(pending)
+        for key in OTP_LOCK_KEYS:
+            if key in data:
+                data.pop(key, None)
+                extra += 1
+        _save(data)
+        return {"cleared": True, "had_send_rows": send_rows, "extra_keys": extra}
 
 
 def request_code(email, profile=None):

@@ -1990,6 +1990,10 @@ def mail_health():
     }
 
 
+OTP_WAIT_CAP = 2 * 60
+OTP_RATE_MSG = "Trop de codes d’un coup. Réessaie dans 2 minutes."
+
+
 def rate_wait_sec(payload, raw=""):
     blob = payload if isinstance(payload, dict) else {}
     for key in ("retry_after", "Retry-After", "retryAfter"):
@@ -1997,20 +2001,14 @@ def rate_wait_sec(payload, raw=""):
         if val is None:
             continue
         try:
-            return max(1, int(float(val)))
+            return max(1, min(OTP_WAIT_CAP, int(float(val))))
         except (TypeError, ValueError):
             continue
-    text = (str(auth_error_code(blob)) + " " + str(blob.get("msg") or "") + " " + str(raw or "")).lower()
-    if "over_email_send" in text or "hour" in text or "heure" in text:
-        return 60 * 60
-    return 15 * 60
+    return OTP_WAIT_CAP
 
 
-def otp_rate_error(wait_sec):
-    mins = max(1, int(math.ceil(float(wait_sec) / 60.0)))
-    if mins >= 50:
-        return "Trop de codes d’un coup. Attends environ une heure et réessaie."
-    return "Trop de codes d’un coup. Réessaie dans %s min." % mins
+def otp_rate_error(wait_sec=None):
+    return OTP_RATE_MSG
 
 
 def friendly_auth_error(payload, raw="", extra=""):
@@ -2480,9 +2478,10 @@ def send_login_code(body, host_header=""):
             return {"ok": True, "email_note": note}
         except ValueError as exc:
             public = str(exc)
-            reason = getattr(exc, "reason", None) or "gotrue"
+            reason = str(getattr(exc, "reason", None) or "gotrue")
             log_auth_send_fail(reason, exists=exists, mode=mode)
-            if public != SEND_FAILED:
+            # Auth 429 / rate limit: never record a Sinki lock; just tell the user to wait 2 min.
+            if public != SEND_FAILED or "over_email" in reason.lower() or "rate" in reason.lower():
                 raise
         except Exception as exc:
             log_auth_send_fail(type(exc).__name__, exists=exists, mode=mode)
@@ -3363,7 +3362,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 117, "mail": mail_health()}
+                payload = {"ok": True, "app": "sinki", "v": 118, "mail": mail_health()}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
