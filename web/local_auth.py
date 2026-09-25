@@ -539,16 +539,17 @@ def request_code(email, profile=None):
 
 def mark_pending_external(email, via="gotrue"):
     email = normalize_email(email)
+    if not email:
+        return False
     with _LOCK:
         data = _load()
-        pending = (data.get("pending") or {}).get(email)
-        if not pending:
-            return False
+        pending = dict((data.get("pending") or {}).get(email) or {})
         pending.pop("code", None)
         pending.pop("code_hash", None)
         pending["via"] = via
         pending["exp"] = time.time() + CODE_TTL
-        data["pending"][email] = pending
+        pending.setdefault("tries", 0)
+        data.setdefault("pending", {})[email] = pending
         _save(data)
         return True
 

@@ -2413,17 +2413,39 @@ def send_supabase_otp_mail(email, create_user):
     return True
 
 
+def log_auth_send_fail(reason, exists=False, mode=""):
+    print(
+        "auth_send_fail reason=%s exists=%s mode=%s resend=%s render=%s"
+        % (reason or "unknown", bool(exists), mode or "-", has_resend_key(), running_on_render()),
+        flush=True,
+    )
+
+
+class AuthMailError(ValueError):
+    def __init__(self, public, reason=""):
+        super().__init__(public)
+        self.reason = reason or "gotrue"
+
+
+def gotrue_send_error(payload, raw=""):
+    return AuthMailError(friendly_auth_error(payload, raw), auth_error_code(payload) or "gotrue_http")
+
+
 def send_supabase_otp_fast(email, prefer_create):
     try:
         send_supabase_otp_mail(email, create_user=prefer_create)
-        return
+        return True
     except urllib.error.HTTPError as exc:
         payload, raw = http_error_body(exc)
         blob = (auth_error_code(payload) + " " + str((payload or {}).get("msg") or raw)).lower()
         if ("user_not_found" in blob or "user not found" in blob) and not prefer_create:
-            send_supabase_otp_mail(email, create_user=True)
-            return
-        raise
+            try:
+                send_supabase_otp_mail(email, create_user=True)
+                return True
+            except urllib.error.HTTPError as exc2:
+                payload, raw = http_error_body(exc2)
+                raise gotrue_send_error(payload, raw) from exc2
+        raise gotrue_send_error(payload, raw) from exc
 
 
 def send_login_code(body, host_header=""):
@@ -2443,15 +2465,30 @@ def send_login_code(body, host_header=""):
         raise ValueError("Ce pseudo est déjà pris. Choisis-en un autre.")
     on_render = running_on_render()
     note = "Regarde tes mails et tes spams. Sinki t’a envoyé un code à 6 chiffres."
+    profile = {
+        "first_name": str(body.get("first_name") or "").strip()[:40],
+        "last_name": str(body.get("last_name") or "").strip()[:40],
+        "nick": nick,
+    }
+
+    # Known accounts: Auth OTP first (the path that used to deliver). No SMTP wait.
+    if exists and supabase_mail_ready():
+        try:
+            send_supabase_otp_fast(email, prefer_create=False)
+            local_auth.mark_pending_external(email, "gotrue")
+            local_auth.record_otp_send(email)
+            return {"ok": True, "email_note": note}
+        except ValueError as exc:
+            public = str(exc)
+            reason = getattr(exc, "reason", None) or "gotrue"
+            log_auth_send_fail(reason, exists=exists, mode=mode)
+            if public != SEND_FAILED:
+                raise
+        except Exception as exc:
+            log_auth_send_fail(type(exc).__name__, exists=exists, mode=mode)
+
     try:
-        otp = local_auth.request_code(
-            email,
-            {
-                "first_name": str(body.get("first_name") or "").strip()[:40],
-                "last_name": str(body.get("last_name") or "").strip()[:40],
-                "nick": nick,
-            },
-        )
+        otp = local_auth.request_code(email, profile)
     except ValueError as exc:
         if str(exc) == "taken":
             raise ValueError("Ce pseudo est déjà pris. Choisis-en un autre.")
@@ -2461,23 +2498,16 @@ def send_login_code(body, host_header=""):
         if mailed:
             local_auth.record_otp_send(email)
             return {"ok": True, "email_note": note}
+        log_auth_send_fail("mail_api", exists=exists, mode=mode)
         raise ValueError(SEND_FAILED)
     if not on_render:
         mailed, _mail_err = send_sinki_mail(email, otp)
         if mailed:
             local_auth.record_otp_send(email)
             return {"ok": True, "email_note": note}
-    if exists and supabase_mail_ready():
-        try:
-            send_supabase_otp_fast(email, prefer_create=False)
-            local_auth.mark_pending_external(email, "gotrue")
-            local_auth.record_otp_send(email)
-            return {"ok": True, "email_note": note}
-        except urllib.error.HTTPError as exc:
-            payload, raw = http_error_body(exc)
-            raise ValueError(friendly_auth_error(payload, raw))
-        except Exception:
-            raise ValueError(SEND_FAILED)
+        log_auth_send_fail("local_mail", exists=exists, mode=mode)
+    else:
+        log_auth_send_fail("no_channel", exists=exists, mode=mode)
     raise ValueError(SEND_FAILED)
 
 
@@ -3333,7 +3363,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 116, "mail": mail_health()}
+                payload = {"ok": True, "app": "sinki", "v": 117, "mail": mail_health()}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
