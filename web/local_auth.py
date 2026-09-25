@@ -8,6 +8,7 @@ catalogue, pour que local et live partagent les mêmes comptes. Pas de mot
 de passe en clair : OTP hashé (sha256).
 """
 
+import base64
 import hashlib
 import json
 import os
@@ -36,6 +37,13 @@ AUTH_LABEL = "sinki-internal-auth"
 AUTH_SHARE_LEN = 28
 OTP_SALT = "sinki-otp:"
 MAX_VERIFY_TRIES = 5
+AVATAR_EXTS = ("jpg", "jpeg", "png", "webp")
+AVATAR_MIME = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+}
 
 _LOCK = threading.RLock()
 _mem = None
@@ -88,7 +96,8 @@ def _normalize_store(data):
 
 def _sb_conf():
     url = (os.environ.get("SUPABASE_URL") or "").strip().rstrip("/")
-    key = (os.environ.get("SUPABASE_SERVICE_ROLE") or "").strip().split()[0]
+    parts = (os.environ.get("SUPABASE_SERVICE_ROLE") or "").strip().split()
+    key = parts[0] if parts else ""
     if url and key:
         return url, key
     return "", ""
@@ -275,7 +284,7 @@ def _merge_accounts(remote, local):
             imported += 1
         else:
             cur = merged["accounts"][email]
-            for key in ("first_name", "last_name", "nick", "group_code", "avatar_ext", "plan"):
+            for key in ("first_name", "last_name", "nick", "group_code", "avatar_ext", "avatar_data", "avatar_rev", "plan"):
                 if not cur.get(key) and acc.get(key):
                     cur[key] = acc[key]
             if not cur.get("fav_ids") and acc.get("fav_ids"):
@@ -574,7 +583,7 @@ def save_account(email, fields):
         acc = (data.get("accounts") or {}).get(email)
         if not acc:
             return None
-        for key in ("first_name", "last_name", "group_code", "plans", "fav_ids", "avatar_ext", "plan", "entitlements"):
+        for key in ("first_name", "last_name", "group_code", "plans", "fav_ids", "avatar_ext", "avatar_data", "avatar_rev", "plan", "entitlements"):
             if key in fields:
                 acc[key] = fields[key]
         if "nick" in fields:
@@ -590,57 +599,113 @@ def save_account(email, fields):
 def avatar_path(user_id, ext):
     uid = str(user_id or "").strip()
     ext = str(ext or "").strip().lower().lstrip(".")
-    if not uid or ext not in ("jpg", "jpeg", "png", "webp"):
+    if not uid or ext not in AVATAR_EXTS:
         return ""
     return os.path.join(AVATAR_DIR, uid + "." + ("jpg" if ext == "jpeg" else ext))
 
 
-def avatar_url(acc):
-    uid = (acc or {}).get("id") or ""
-    ext = (acc or {}).get("avatar_ext") or ""
+def _shown_ext(ext):
+    ext = str(ext or "").strip().lower().lstrip(".")
+    if ext in ("jpg", "jpeg"):
+        return "jpg"
+    return ext if ext in ("png", "webp") else ""
+
+
+def _avatar_blob(acc):
+    raw = (acc or {}).get("avatar_data") or ""
+    if not raw:
+        return b""
+    if str(raw).startswith("data:"):
+        _header, _sep, raw = str(raw).partition(",")
+    try:
+        return base64.b64decode(raw, validate=False)
+    except (ValueError, TypeError):
+        return b""
+
+
+def _account_by_id(user_id):
+    uid = str(user_id or "").strip()
+    if not uid:
+        return None
+    for acc in ((_load().get("accounts") or {}).values()):
+        if str((acc or {}).get("id") or "") == uid:
+            return acc
+    return None
+
+
+def _write_avatar_cache(uid, ext, blob):
     path = avatar_path(uid, ext)
-    if not path or not os.path.isfile(path):
-        return ""
-    stamp = int(os.path.getmtime(path))
-    shown = "jpg" if ext in ("jpg", "jpeg") else ext
-    return "/avatars/" + uid + "." + shown + "?v=" + str(stamp)
-
-
-def save_avatar(email, blob, ext):
-    email = normalize_email(email)
-    ext = "jpg" if ext in ("jpg", "jpeg") else ext
-    with _LOCK:
-        data = _load()
-        acc = (data.get("accounts") or {}).get(email)
-        if not acc:
-            raise ValueError("Compte introuvable")
+    if not path or not blob:
+        return
+    try:
         os.makedirs(AVATAR_DIR, exist_ok=True)
-        uid = acc.get("id") or ""
         for name in os.listdir(AVATAR_DIR):
             if name.startswith(uid + "."):
                 try:
                     os.unlink(os.path.join(AVATAR_DIR, name))
                 except OSError:
                     pass
-        path = avatar_path(uid, ext)
         with open(path, "wb") as fh:
             fh.write(blob)
             fh.flush()
             os.fsync(fh.fileno())
+    except OSError:
+        pass
+
+
+def avatar_url(acc):
+    acc = acc or {}
+    uid = acc.get("id") or ""
+    shown = _shown_ext(acc.get("avatar_ext"))
+    if not uid or not shown:
+        return ""
+    path = avatar_path(uid, shown)
+    has_file = bool(path and os.path.isfile(path))
+    if not acc.get("avatar_data") and not has_file:
+        return ""
+    stamp = acc.get("avatar_rev") or (int(os.path.getmtime(path)) if has_file else 1)
+    return "/avatars/" + uid + "." + shown + "?v=" + str(stamp)
+
+
+def save_avatar(email, blob, ext):
+    email = normalize_email(email)
+    ext = _shown_ext(ext)
+    if ext not in ("jpg", "png", "webp"):
+        raise ValueError("Format invalide. Utilise jpg, png ou webp.")
+    if not blob:
+        raise ValueError("Photo invalide")
+    with _LOCK:
+        data = _load()
+        acc = (data.get("accounts") or {}).get(email)
+        if not acc:
+            raise ValueError("Compte introuvable")
+        uid = acc.get("id") or ""
+        mime = AVATAR_MIME.get(ext) or "application/octet-stream"
         acc["avatar_ext"] = ext
+        acc["avatar_data"] = "data:%s;base64,%s" % (mime, base64.b64encode(blob).decode("ascii"))
+        acc["avatar_rev"] = int(time.time())
         data["accounts"][email] = acc
         _save(data)
+        _write_avatar_cache(uid, ext, blob)
         return avatar_url(acc)
 
 
 def read_avatar(user_id, ext):
+    ext = _shown_ext(ext)
     path = avatar_path(user_id, ext)
-    if not path or not os.path.isfile(path):
-        return None, ""
-    with open(path, "rb") as fh:
-        blob = fh.read()
-    mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(ext, "application/octet-stream")
-    return blob, mime
+    if path and os.path.isfile(path):
+        with open(path, "rb") as fh:
+            blob = fh.read()
+        if blob:
+            return blob, AVATAR_MIME.get(ext) or "application/octet-stream"
+    with _LOCK:
+        acc = _account_by_id(user_id)
+        blob = _avatar_blob(acc)
+        stored = _shown_ext((acc or {}).get("avatar_ext"))
+        if blob and stored == ext:
+            _write_avatar_cache(user_id, ext, blob)
+            return blob, AVATAR_MIME.get(ext) or "application/octet-stream"
+    return None, ""
 
 
 def delete_account(email):
