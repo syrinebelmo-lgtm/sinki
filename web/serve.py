@@ -1855,7 +1855,7 @@ def vote_group(code, display_name, voter_id, outing_id):
     return save_group_filters(group, filters)
 
 
-def gotrue(method, path, body=None, bearer=None):
+def gotrue(method, path, body=None, bearer=None, timeout=12):
     base = os.environ["SUPABASE_URL"].rstrip("/")
     key = os.environ["SUPABASE_SERVICE_ROLE"]
     data = None if body is None else json.dumps(body).encode("utf-8")
@@ -1865,7 +1865,7 @@ def gotrue(method, path, body=None, bearer=None):
         "Content-Type": "application/json",
     }
     req = urllib.request.Request(base + "/auth/v1" + path, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode("utf-8")
         return json.loads(raw) if raw else {}
 
@@ -1949,6 +1949,11 @@ def auth_error_code(payload):
     return str(payload.get("error_code") or payload.get("code") or "")
 
 
+MAIL_NOT_CONFIGURED = "L’envoi de mail n’est pas configuré. Réessaie plus tard, ou contacte l’aide dans Réglages."
+SUPPORT_TO = "thesinkiisinki@gmail.com"
+MAIL_TIMEOUT = 8
+
+
 def running_on_render():
     return bool(os.environ.get("RENDER") or os.environ.get("RENDER_SERVICE_ID"))
 
@@ -1957,12 +1962,55 @@ def has_resend_key():
     return bool((os.environ.get("RESEND_API_KEY") or "").strip())
 
 
+def has_smtp():
+    return bool(
+        (os.environ.get("SMTP_HOST") or "").strip()
+        and (os.environ.get("SMTP_USER") or "").strip()
+        and (os.environ.get("SMTP_PASS") or "").strip()
+    )
+
+
+def supabase_mail_ready():
+    return bool((os.environ.get("SUPABASE_URL") or "").strip() and (os.environ.get("SUPABASE_SERVICE_ROLE") or "").strip())
+
+
+def can_send_support_mail():
+    if has_resend_key():
+        return True
+    return (not running_on_render()) and (has_smtp() or sys.platform == "darwin")
+
+
 def mail_health():
     return {
         "resend": has_resend_key(),
-        "supabase": bool((os.environ.get("SUPABASE_URL") or "").strip() and (os.environ.get("SUPABASE_SERVICE_ROLE") or "").strip()),
+        "supabase": supabase_mail_ready(),
+        "smtp": has_smtp() and not running_on_render(),
         "macos": sys.platform == "darwin" and not running_on_render(),
+        "support": can_send_support_mail(),
     }
+
+
+def rate_wait_sec(payload, raw=""):
+    blob = payload if isinstance(payload, dict) else {}
+    for key in ("retry_after", "Retry-After", "retryAfter"):
+        val = blob.get(key)
+        if val is None:
+            continue
+        try:
+            return max(1, int(float(val)))
+        except (TypeError, ValueError):
+            continue
+    text = (str(auth_error_code(blob)) + " " + str(blob.get("msg") or "") + " " + str(raw or "")).lower()
+    if "over_email_send" in text or "hour" in text or "heure" in text:
+        return 60 * 60
+    return 15 * 60
+
+
+def otp_rate_error(wait_sec):
+    mins = max(1, int(math.ceil(float(wait_sec) / 60.0)))
+    if mins >= 50:
+        return "Trop de codes d’un coup. Attends environ une heure et réessaie."
+    return "Trop de codes d’un coup. Réessaie dans %s min." % mins
 
 
 def friendly_auth_error(payload, raw="", extra=""):
@@ -1974,26 +2022,17 @@ def friendly_auth_error(payload, raw="", extra=""):
     if "user_not_found" in blob or "user not found" in blob:
         return "Pas de compte avec cet email. Clique S’inscrire."
     if "rate" in blob or "over_request" in blob or "over_email_send" in blob:
-        return "Trop de codes d’un coup (limite mail Supabase). Attends environ une heure et réessaie."
+        return otp_rate_error(rate_wait_sec(payload, raw))
     if "otp_disabled" in blob or "signups not allowed" in blob:
-        return (
-            "Supabase Auth n’a pas ce mail, et il ne peut plus créer d’utilisateur "
-            "(erreur base). Ajoute RESEND_API_KEY dans les variables Render."
-        )
+        return MAIL_NOT_CONFIGURED
     if "database error" in blob or "unexpected_failure" in blob:
-        return (
-            "Supabase Auth n’a pas pu envoyer (erreur base à la création du user). "
-            "Ajoute RESEND_API_KEY dans les variables Render — Render bloque SMTP."
-        )
+        return MAIL_NOT_CONFIGURED
     if "invalid" in blob and "email" in blob:
         return "Email invalide."
     if extra:
         return str(extra)
     if running_on_render() and not has_resend_key():
-        return (
-            "Impossible d’envoyer le code : pas de RESEND_API_KEY, SMTP bloqué, "
-            "et l’email Auth Supabase a échoué. Ajoute RESEND_API_KEY (resend.com, gratuit)."
-        )
+        return MAIL_NOT_CONFIGURED
     return "Impossible d’envoyer le code. Réessaie."
 
 
@@ -2299,55 +2338,48 @@ def send_event_moderation_mail(ev, origin=""):
 
 def mail_unconfigured_error(extra=""):
     extra = str(extra or "").strip()
-    if running_on_render():
-        base = (
-            "L’envoi de mail n’est pas configuré sur ce serveur "
-            "(Resend manquant, SMTP bloqué par Render, email Auth Supabase en échec). "
-            "Ajoute RESEND_API_KEY dans les variables Render (resend.com, gratuit)."
-        )
-        return (extra + " " + base).strip() if extra else base
-    return extra or (
-        "Impossible d’envoyer le mail Sinki. Connecte l’app Mail sur ce Mac, "
-        "ou ajoute un RESEND_API_KEY gratuit dans .env."
-    )
+    if extra and "n’est pas configuré" in extra:
+        return extra
+    return MAIL_NOT_CONFIGURED
 
 
-def send_sinki_mail(to, code):
+def send_sinki_mail(to, code, channels=None):
+    if channels is None:
+        if running_on_render():
+            channels = ["resend"] if has_resend_key() else []
+        else:
+            channels = ["resend", "smtp", "macos"]
     errors = []
-    try:
-        if send_resend_mail(to, code):
-            return True, ""
-    except ValueError as exc:
-        errors.append(str(exc))
-    except Exception:
-        if has_resend_key():
-            errors.append("Resend n’a pas envoyé le mail.")
-    try:
-        if send_smtp_mail(to, code):
-            return True, ""
-    except Exception:
-        pass
-    try:
-        if send_macos_mail(to, code):
-            return True, ""
-    except Exception:
-        pass
+    for channel in channels:
+        try:
+            if channel == "resend" and send_resend_mail(to, code):
+                return True, ""
+            if channel == "smtp" and not running_on_render() and send_smtp_mail(to, code):
+                return True, ""
+            if channel == "macos" and not running_on_render() and send_macos_mail(to, code):
+                return True, ""
+        except ValueError as exc:
+            errors.append(str(exc))
+        except Exception:
+            if channel == "resend" and has_resend_key():
+                errors.append("Resend n’a pas envoyé le mail.")
     return False, " ".join(errors).strip()
 
 
-def send_resend_mail(to, code):
+def send_resend_message(to, subject, html, text, reply_to="", timeout=MAIL_TIMEOUT):
     key = (os.environ.get("RESEND_API_KEY") or "").strip()
     if not key:
         return False
-    payload = json.dumps(
-        {
-            "from": resend_from_header(),
-            "to": [to],
-            "subject": "Voici ton code Sinki",
-            "html": sinki_mail_html(code),
-            "text": sinki_mail_text(code),
-        }
-    ).encode("utf-8")
+    body = {
+        "from": resend_from_header(),
+        "to": [to],
+        "subject": subject,
+        "html": html,
+        "text": text,
+    }
+    if reply_to:
+        body["reply_to"] = reply_to
+    payload = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         "https://api.resend.com/emails",
         data=payload,
@@ -2355,7 +2387,7 @@ def send_resend_mail(to, code):
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             resp.read()
     except urllib.error.HTTPError as exc:
         payload, raw = http_error_body(exc)
@@ -2366,11 +2398,17 @@ def send_resend_mail(to, code):
                 "Resend refuse l’expéditeur. Vérifie MAIL_FROM (domaine vérifié) "
                 "ou laisse le défaut onboarding@resend.dev."
             )
-        raise ValueError("Resend n’a pas envoyé le mail. Vérifie RESEND_API_KEY.")
+        raise ValueError("Resend n’a pas envoyé le mail.")
     return True
 
 
+def send_resend_mail(to, code):
+    return send_resend_message(to, "Voici ton code Sinki", sinki_mail_html(code), sinki_mail_text(code))
+
+
 def send_smtp_mail(to, code):
+    if running_on_render():
+        return False
     host = (os.environ.get("SMTP_HOST") or "").strip()
     user = (os.environ.get("SMTP_USER") or "").strip()
     password = (os.environ.get("SMTP_PASS") or "").strip()
@@ -2378,7 +2416,7 @@ def send_smtp_mail(to, code):
         return False
     port = int(os.environ.get("SMTP_PORT") or "587")
     msg = build_sinki_email(to, code)
-    with smtplib.SMTP(host, port, timeout=20) as smtp:
+    with smtplib.SMTP(host, port, timeout=MAIL_TIMEOUT) as smtp:
         smtp.starttls()
         smtp.login(user, password)
         smtp.sendmail(user, [to], msg.as_string())
@@ -2386,40 +2424,29 @@ def send_smtp_mail(to, code):
 
 
 def send_supabase_otp_mail(email, create_user):
-    gotrue("POST", "/otp", {"email": email, "create_user": bool(create_user)})
+    gotrue("POST", "/otp", {"email": email, "create_user": bool(create_user)}, timeout=MAIL_TIMEOUT)
     return True
 
 
-def gotrue_email_exists(email):
-    email = normalize_email(email)
+def send_supabase_otp_fast(email, prefer_create):
     try:
-        data = gotrue("GET", "/admin/users?page=1&per_page=200")
-    except Exception:
-        return False
-    for user in data.get("users") or []:
-        if normalize_email(user.get("email") or "") == email:
-            return True
-    return False
-
-
-_OTP_SENDS = {}
-
-
-def otp_send_limited(email):
-    now = time.time()
-    window = _OTP_SENDS.setdefault(email, [])
-    window[:] = [stamp for stamp in window if now - stamp < 15 * 60]
-    if len(window) >= 5:
-        return True
-    window.append(now)
-    return False
+        send_supabase_otp_mail(email, create_user=prefer_create)
+        return
+    except urllib.error.HTTPError as exc:
+        payload, raw = http_error_body(exc)
+        blob = (auth_error_code(payload) + " " + str((payload or {}).get("msg") or raw)).lower()
+        if ("user_not_found" in blob or "user not found" in blob) and not prefer_create:
+            send_supabase_otp_mail(email, create_user=True)
+            return
+        raise
 
 
 def send_login_code(body, host_header=""):
     body = body if isinstance(body, dict) else {"email": body}
     email = auth_identity(body)
-    if otp_send_limited(email):
-        raise ValueError("Trop de codes d’un coup. Attends environ 15 minutes.")
+    blocked, wait_sec = local_auth.otp_send_status(email)
+    if blocked:
+        raise ValueError(otp_rate_error(wait_sec))
     mode = str(body.get("mode") or "").strip().lower()
     exists = local_auth.email_has_account(email)
     if mode == "signup" and exists:
@@ -2429,6 +2456,9 @@ def send_login_code(body, host_header=""):
     nick = str(body.get("nick") or "").strip()[:40]
     if nick and local_auth.pseudo_taken(nick, email):
         raise ValueError("Ce pseudo est déjà pris. Choisis-en un autre.")
+    on_render = running_on_render()
+    if on_render and not has_resend_key() and not supabase_mail_ready():
+        raise ValueError(MAIL_NOT_CONFIGURED)
     try:
         otp = local_auth.request_code(
             email,
@@ -2442,13 +2472,39 @@ def send_login_code(body, host_header=""):
         if str(exc) == "taken":
             raise ValueError("Ce pseudo est déjà pris. Choisis-en un autre.")
         raise
+    if on_render:
+        if has_resend_key():
+            mailed, mail_err = send_sinki_mail(email, otp, channels=["resend"])
+            if mailed:
+                local_auth.record_otp_send(email)
+                return {"ok": True, "email_note": "Regarde tes mails et tes spams. Sinki t’a envoyé un code à 6 chiffres."}
+            raise ValueError(mail_err or MAIL_NOT_CONFIGURED)
+        try:
+            send_supabase_otp_fast(email, prefer_create=(mode == "signup" or not exists))
+            local_auth.mark_pending_external(email, "gotrue")
+            local_auth.record_otp_send(email)
+            return {
+                "ok": True,
+                "email_note": (
+                    "Regarde tes mails et tes spams. Tu dois y trouver un code à 6 chiffres "
+                    "(parfois dans un mail « Magic Link » Supabase)."
+                ),
+            }
+        except urllib.error.HTTPError as exc:
+            payload, raw = http_error_body(exc)
+            raise ValueError(friendly_auth_error(payload, raw))
+        except Exception:
+            raise ValueError(MAIL_NOT_CONFIGURED)
     mailed, mail_err = send_sinki_mail(email, otp)
     if mailed:
+        local_auth.record_otp_send(email)
         return {"ok": True, "email_note": "Regarde tes mails et tes spams. Sinki t’a envoyé un code à 6 chiffres."}
-    auth_exists = gotrue_email_exists(email)
+    if not supabase_mail_ready():
+        raise ValueError(mail_unconfigured_error(mail_err))
     try:
-        send_supabase_otp_mail(email, create_user=not auth_exists)
+        send_supabase_otp_fast(email, prefer_create=(mode == "signup" or not exists))
         local_auth.mark_pending_external(email, "gotrue")
+        local_auth.record_otp_send(email)
         return {
             "ok": True,
             "email_note": (
@@ -2461,6 +2517,76 @@ def send_login_code(body, host_header=""):
         raise ValueError(friendly_auth_error(payload, raw, extra=mail_err))
     except Exception:
         raise ValueError(mail_unconfigured_error(mail_err))
+
+
+_SUPPORT_SENDS = {}
+
+
+def support_send_limited(key):
+    now = time.time()
+    window = _SUPPORT_SENDS.setdefault(key, [])
+    window[:] = [stamp for stamp in window if now - stamp < 15 * 60]
+    return len(window) >= 3
+
+
+def record_support_send(key):
+    now = time.time()
+    window = _SUPPORT_SENDS.setdefault(key, [])
+    window[:] = [stamp for stamp in window if now - stamp < 15 * 60]
+    window.append(now)
+
+
+def send_support_message(body, user=None):
+    text = str((body or {}).get("message") or "").strip()
+    if len(text) < 8:
+        raise ValueError("Décris le problème en quelques mots.")
+    text = text[:2000]
+    reply = ""
+    if user and user.get("email"):
+        reply = normalize_email(user.get("email"))
+    else:
+        raw = normalize_email((body or {}).get("email") or "")
+        if raw and EMAIL_RE.match(raw):
+            reply = raw
+    limit_key = reply or "anon"
+    if support_send_limited(limit_key):
+        raise ValueError("Trop de messages d’un coup. Réessaie dans quelques minutes.")
+    if not can_send_support_mail():
+        raise ValueError("L’envoi de mail n’est pas configuré. Écris-nous à %s." % SUPPORT_TO)
+    subject = "Sinki — message d’aide"
+    plain = "De : %s\n\n%s" % (reply or "(sans email)", text)
+    html = "<p>%s</p><pre style=\"white-space:pre-wrap\">%s</pre>" % (
+        ("De : " + reply) if reply else "Message Sinki",
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"),
+    )
+    if has_resend_key():
+        if send_resend_message(SUPPORT_TO, subject, html, plain, reply_to=reply):
+            record_support_send(limit_key)
+            return {"ok": True}
+        raise ValueError("Impossible d’envoyer le message. Écris-nous à %s." % SUPPORT_TO)
+    if running_on_render():
+        raise ValueError("L’envoi de mail n’est pas configuré. Écris-nous à %s." % SUPPORT_TO)
+    if has_smtp():
+        host = (os.environ.get("SMTP_HOST") or "").strip()
+        user_name = (os.environ.get("SMTP_USER") or "").strip()
+        password = (os.environ.get("SMTP_PASS") or "").strip()
+        port = int(os.environ.get("SMTP_PORT") or "587")
+        msg = MIMEText(plain, "plain", "utf-8")
+        msg["Subject"] = Header(subject, "utf-8")
+        msg["From"] = sinki_from_header()
+        msg["To"] = SUPPORT_TO
+        if reply:
+            msg["Reply-To"] = reply
+        with smtplib.SMTP(host, port, timeout=MAIL_TIMEOUT) as smtp:
+            smtp.starttls()
+            smtp.login(user_name, password)
+            smtp.sendmail(user_name, [SUPPORT_TO], msg.as_string())
+        record_support_send(limit_key)
+        return {"ok": True}
+    if send_macos_notice(SUPPORT_TO, subject, plain):
+        record_support_send(limit_key)
+        return {"ok": True}
+    raise ValueError("Impossible d’envoyer le message. Écris-nous à %s." % SUPPORT_TO)
 
 
 def verify_gotrue_otp(email, code):
@@ -3245,7 +3371,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 111, "mail": mail_health()}
+                payload = {"ok": True, "app": "sinki", "v": 112, "mail": mail_health()}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
@@ -3356,6 +3482,9 @@ class Handler(SimpleHTTPRequestHandler):
                 payload = {"taken": local_auth.pseudo_taken(q, email)}
             elif path == "/api/auth/send" and post:
                 payload = send_login_code(self.json_body(), self.headers.get("Host"))
+            elif path == "/api/support" and post:
+                user = user_from_bearer(self.headers.get("Authorization"))
+                payload = send_support_message(self.json_body(), user)
             elif path == "/api/auth/verify" and post:
                 body = self.json_body()
                 payload = verify_login_code(body)

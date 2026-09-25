@@ -11,6 +11,7 @@ de passe en clair : OTP hashé (sha256).
 import base64
 import hashlib
 import json
+import math
 import os
 import secrets
 import shutil
@@ -36,6 +37,9 @@ AUTH_SHARE = "ZZSKAUTH"
 AUTH_LABEL = "sinki-internal-auth"
 AUTH_SHARE_LEN = 28
 OTP_SALT = "sinki-otp:"
+OTP_SEND_WINDOW = 15 * 60
+OTP_SEND_MAX = 5
+OTP_LOCK_KEYS = ("sends", "otp_sends", "otp_at", "rate_lock", "locked_until", "last_otp", "mail_sends")
 MAX_VERIFY_TRIES = 5
 AVATAR_EXTS = ("jpg", "jpeg", "png", "webp")
 AVATAR_MIME = {
@@ -58,7 +62,7 @@ def normalize_email(value):
 
 
 def _empty():
-    return {"accounts": {}, "pending": {}, "sessions": {}}
+    return {"accounts": {}, "pending": {}, "sessions": {}, "otp_sends": {}}
 
 
 def _read_store(path):
@@ -91,7 +95,20 @@ def _normalize_store(data):
             sess = dict(row)
             sess["email"] = normalize_email(sess.get("email") or "")
             sessions[token] = sess
-    return {"accounts": accounts, "pending": pending, "sessions": sessions}
+    otp_sends = {}
+    for key, stamps in (data.get("otp_sends") or {}).items():
+        email = normalize_email(key)
+        if not email or not isinstance(stamps, list):
+            continue
+        keep = []
+        for stamp in stamps:
+            try:
+                keep.append(float(stamp))
+            except (TypeError, ValueError):
+                continue
+        if keep:
+            otp_sends[email] = keep
+    return {"accounts": accounts, "pending": pending, "sessions": sessions, "otp_sends": otp_sends}
 
 
 def _sb_conf():
@@ -138,6 +155,19 @@ def _prune(data):
             sessions[token] = row
     data["pending"] = pending
     data["sessions"] = sessions
+    sends = {}
+    for email, stamps in (data.get("otp_sends") or {}).items():
+        keep = []
+        for stamp in stamps or []:
+            try:
+                val = float(stamp)
+            except (TypeError, ValueError):
+                continue
+            if now - val < OTP_SEND_WINDOW:
+                keep.append(val)
+        if keep:
+            sends[email] = keep
+    data["otp_sends"] = sends
     return data
 
 
@@ -240,6 +270,7 @@ def _save_remote(data):
         "accounts": data.get("accounts") or {},
         "pending": data.get("pending") or {},
         "sessions": data.get("sessions") or {},
+        "otp_sends": data.get("otp_sends") or {},
     }
     row_id = _group_id or _find_auth_row()
     if row_id:
@@ -296,6 +327,17 @@ def _merge_accounts(remote, local):
     for token, sess in (local.get("sessions") or {}).items():
         if token not in merged["sessions"]:
             merged["sessions"][token] = dict(sess)
+    sends = dict(merged.get("otp_sends") or {})
+    for email, stamps in (local.get("otp_sends") or {}).items():
+        have = set(sends.get(email) or [])
+        for stamp in stamps or []:
+            try:
+                have.add(float(stamp))
+            except (TypeError, ValueError):
+                continue
+        if have:
+            sends[email] = sorted(have)
+    merged["otp_sends"] = sends
     return merged, imported
 
 
@@ -404,6 +446,73 @@ def pseudo_taken(nick, except_email=""):
             if nick_key(pending.get("nick")) == key:
                 return True
         return False
+
+
+def otp_send_status(email):
+    """Return (blocked, wait_sec). Failed sends must not be recorded."""
+    email = normalize_email(email)
+    now = time.time()
+    with _LOCK:
+        data = _load()
+        stamps = []
+        for stamp in (data.get("otp_sends") or {}).get(email) or []:
+            try:
+                val = float(stamp)
+            except (TypeError, ValueError):
+                continue
+            if now - val < OTP_SEND_WINDOW:
+                stamps.append(val)
+    if len(stamps) >= OTP_SEND_MAX:
+        wait = OTP_SEND_WINDOW - (now - min(stamps))
+        return True, max(1, int(math.ceil(wait)))
+    return False, 0
+
+
+def record_otp_send(email):
+    email = normalize_email(email)
+    if not email:
+        return
+    now = time.time()
+    with _LOCK:
+        data = _load()
+        sends = data.setdefault("otp_sends", {})
+        stamps = []
+        for stamp in sends.get(email) or []:
+            try:
+                val = float(stamp)
+            except (TypeError, ValueError):
+                continue
+            if now - val < OTP_SEND_WINDOW:
+                stamps.append(val)
+        stamps.append(now)
+        sends[email] = stamps
+        data["otp_sends"] = sends
+        _save(data)
+
+
+def clear_otp_sends(email):
+    """Drop the send window and any lock fields for one account. Never log the email."""
+    email = normalize_email(email)
+    if not email:
+        return {"cleared": False, "had_sends": 0, "extra_keys": 0}
+    with _LOCK:
+        data = _load()
+        stamps = (data.get("otp_sends") or {}).pop(email, None) or []
+        extra = 0
+        acc = (data.get("accounts") or {}).get(email)
+        if isinstance(acc, dict):
+            for key in OTP_LOCK_KEYS:
+                if key in acc:
+                    acc.pop(key, None)
+                    extra += 1
+        pending = (data.get("pending") or {}).get(email)
+        if isinstance(pending, dict):
+            for key in OTP_LOCK_KEYS:
+                if key in pending:
+                    pending.pop(key, None)
+                    extra += 1
+        _save(data)
+        return {"cleared": True, "had_sends": len(stamps), "extra_keys": extra}
 
 
 def request_code(email, profile=None):

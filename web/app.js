@@ -157,6 +157,10 @@ const state = {
   authBusy: false,
   authError: "",
   authHint: "",
+  supportBusy: false,
+  supportHint: "",
+  supportDraft: "",
+  mailSupport: false,
   settingsView: "menu",
   accountDeleteAsk: false,
   profileHint: "",
@@ -1256,8 +1260,14 @@ function friendlyAuthError(err) {
   if (s.includes("email_exists") || s.includes("already been registered") || s.includes("déjà un compte")) return t("err_mail_taken");
   if (s.includes("Aucun compte") || s.includes("no account")) return t("err_no_account");
   if (s.includes("déjà pris") || s.includes("already taken") || s === "taken") return t("err_pseudo_taken");
-  if (/rate|over_email_send|Trop de codes/i.test(s)) return t("err_mail_rate");
-  if (/RESEND_API_KEY|Resend|SMTP bloqué|n’est pas configuré|n'est pas configuré/i.test(s)) return s;
+  if (/rate|over_email_send|Trop de codes|Too many codes/i.test(s)) {
+    const mins = s.match(/(\d+)\s*min/i);
+    if (mins) return t("err_mail_rate", { min: mins[1] });
+    if (/heure|hour/i.test(s)) return t("err_mail_rate_hour");
+    return t("err_mail_rate", { min: 15 });
+  }
+  if (/n’est pas configuré|n'est pas configuré|isn’t configured|is not configured/i.test(s)) return t("err_mail_off");
+  if (/RESEND_API_KEY|Resend|SMTP bloqué/i.test(s)) return s;
   if (s.trim().startsWith("{")) return t("err_send_code");
   return s || t("err_send_code");
 }
@@ -1278,6 +1288,24 @@ function avatarHtml(acc, cls) {
 }
 function setRow(act, label, extra) {
   return `<button type="button" class="set-row" data-act="${act}"><span>${escapeHtml(label)}</span><span class="set-extra">${extra ? escapeHtml(extra) : ""} ›</span></button>`;
+}
+function supportContactHtml() {
+  const mail = t("set_contact_mail");
+  const hint = state.supportHint
+    ? `<p class="${state.supportHint === t("set_support_sent") || state.supportHint === t("set_contact_copied") ? "hint" : "empty"}">${escapeHtml(state.supportHint)}</p>`
+    : "";
+  const form = state.mailSupport ? `
+        <label>${t("set_support_form")}</label>
+        <textarea id="supportmsg" rows="4" maxlength="2000" placeholder="${escapeHtml(t("set_support_ph"))}">${escapeHtml(state.supportDraft || "")}</textarea>
+        ${state.account?.email ? "" : `<label>${t("your_email")}</label><input type="email" id="supportemail" placeholder="toi@mail.com" value="${escapeHtml(state.authEmail || "")}" autocomplete="email" />`}
+        ${hint}
+        <button class="btn stack-gap" data-act="support-send" ${state.supportBusy ? "disabled" : ""}>${state.supportBusy ? t("set_support_sending") : t("set_support_send")}</button>` : hint;
+  return `<div class="account-card">
+        <p class="hint" style="margin-top:0">${escapeHtml(mail)}</p>
+        <a class="btn stack-gap" href="mailto:${escapeHtml(mail)}?subject=Sinki">${t("set_contact_btn")}</a>
+        <button type="button" class="btn secondary" data-act="copy-support-mail">${t("set_contact_copy")}</button>
+        ${form}
+      </div>`;
 }
 function setLinkRow(href, label) {
   return `<a class="set-row" href="${escapeHtml(href)}"><span>${escapeHtml(label)}</span><span class="set-extra">↗</span></a>`;
@@ -1441,19 +1469,15 @@ function settingsPage() {
         <p class="hint"><strong>${t("set_help_q3")}</strong></p>
         <p class="hint">${t("set_help_a3")}</p>
       </div>
-      <button class="ghost" data-act="set-contact">${t("set_contact")}</button>
+      ${supportContactHtml()}
       ${navHtml("home")}
     </div>`;
   }
   if (view === "contact") {
-    const mail = t("set_contact_mail");
     return `<div class="page has-nav">
       <h1>${t("set_contact_title")}</h1>
       <p class="lead">${t("set_contact_lead")}</p>
-      <div class="account-card">
-        <p class="hint" style="margin-top:0">${escapeHtml(mail)}</p>
-        <a class="btn stack-gap" href="mailto:${escapeHtml(mail)}?subject=Sinki">${t("set_contact_btn")}</a>
-      </div>
+      ${supportContactHtml()}
       ${navHtml("home")}
     </div>`;
   }
@@ -2193,8 +2217,16 @@ function bind() {
       }
       return;
     }
-    if (act === "set-help") { state.settingsView = "help"; render(); return; }
-    if (act === "set-contact") { state.settingsView = "contact"; render(); return; }
+    if (act === "set-help") { state.settingsView = "help"; state.supportHint = ""; render(); fetchMailHealth(); return; }
+    if (act === "set-contact") { state.settingsView = "contact"; state.supportHint = ""; render(); fetchMailHealth(); return; }
+    if (act === "copy-support-mail") {
+      state.supportDraft = (($("#supportmsg") && $("#supportmsg").value) || state.supportDraft || "");
+      const ok = await copyText(t("set_contact_mail"));
+      state.supportHint = ok ? t("set_contact_copied") : t("set_contact_mail");
+      render();
+      return;
+    }
+    if (act === "support-send") { await sendSupportMessage(); return; }
     if (act === "set-privacy") { state.settingsView = "privacy"; render(); return; }
     if (act === "set-terms") { state.settingsView = "terms"; render(); return; }
     if (act === "set-purchases") { state.settingsView = "purchases"; render(); return; }
@@ -2334,6 +2366,7 @@ function bind() {
     if (act === "auth-back-names") { state.authView = "names"; state.authError = ""; render(); return; }
     if (act === "auth-close") { state.authView = "closed"; state.authError = ""; state.authHint = ""; render(); return; }
     if (act === "auth-next-contact") {
+      if (state.authBusy) return;
       state.authEmail = ($("#authemail") && $("#authemail").value) || state.authEmail;
       if (!validEmail(state.authEmail)) { state.authError = t("err_mail"); render(); return; }
       state.authError = "";
@@ -2351,12 +2384,25 @@ function bind() {
       return;
     }
     if (act === "auth-send") {
+      if (state.authBusy) return;
       state.authPseudo = (($("#authpseudo") && $("#authpseudo").value) || state.authPseudo).trim();
       if (state.authMode === "signup" && !validPseudo(state.authPseudo)) { state.authError = t("err_pseudo"); render(); return; }
       if (state.authMode === "signup") {
-        const chk = await fetch("/api/auth/pseudo?q=" + encodeURIComponent(state.authPseudo) + "&email=" + encodeURIComponent(state.authEmail || ""));
-        const info = await chk.json().catch(() => ({}));
-        if (info.taken) { state.authError = t("err_pseudo_taken"); render(); return; }
+        state.authBusy = true;
+        state.authError = "";
+        render();
+        try {
+          const chk = await fetch("/api/auth/pseudo?q=" + encodeURIComponent(state.authPseudo) + "&email=" + encodeURIComponent(state.authEmail || ""));
+          const info = await chk.json().catch(() => ({}));
+          if (info.taken) {
+            state.authError = t("err_pseudo_taken");
+            state.authBusy = false;
+            render();
+            return;
+          }
+        } catch (_) {
+          state.authBusy = false;
+        }
       }
       await sendLoginCode();
       return;
@@ -2664,6 +2710,10 @@ function bind() {
         syncCityContinue();
       }, 60);
     };
+  }
+  const supportmsg = $("#supportmsg");
+  if (supportmsg) {
+    supportmsg.oninput = () => { state.supportDraft = supportmsg.value; };
   }
   const langq = $("#langq");
   if (langq) {
@@ -3216,6 +3266,8 @@ async function runSearch() {
 }
 
 async function sendLoginCode() {
+  if (state._authSendInFlight) return;
+  state._authSendInFlight = true;
   state.authEmail = (($("#authemail") && $("#authemail").value) || state.authEmail || "").trim();
   state.authBusy = true;
   state.authError = "";
@@ -3241,7 +3293,56 @@ async function sendLoginCode() {
   } catch (err) {
     state.authError = String(err.message || err);
   } finally {
+    state._authSendInFlight = false;
     state.authBusy = false;
+    render();
+  }
+}
+
+async function fetchMailHealth() {
+  const prev = state.mailSupport;
+  try {
+    const r = await fetch("/api/health");
+    const data = await r.json();
+    state.mailSupport = Boolean(data.mail && data.mail.support);
+  } catch (_) {
+    state.mailSupport = false;
+  }
+  if (state.mailSupport !== prev && state.screen === "settings" && (state.settingsView === "help" || state.settingsView === "contact")) {
+    state.supportDraft = (($("#supportmsg") && $("#supportmsg").value) || state.supportDraft || "");
+    render();
+  }
+}
+
+async function sendSupportMessage() {
+  if (state.supportBusy) return;
+  const msg = (($("#supportmsg") && $("#supportmsg").value) || state.supportDraft || "").trim();
+  const email = (($("#supportemail") && $("#supportemail").value) || state.account?.email || state.authEmail || "").trim();
+  state.supportDraft = msg;
+  if (msg.length < 8) {
+    state.supportHint = t("set_support_form");
+    render();
+    return;
+  }
+  state.supportBusy = true;
+  state.supportHint = "";
+  render();
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (state.session?.access_token) headers.Authorization = "Bearer " + state.session.access_token;
+    const r = await fetch("/api/support", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ message: msg, email }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || t("set_support_err"));
+    state.supportDraft = "";
+    state.supportHint = t("set_support_sent");
+  } catch (err) {
+    state.supportHint = String(err.message || t("set_support_err"));
+  } finally {
+    state.supportBusy = false;
     render();
   }
 }

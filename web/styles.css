@@ -355,6 +355,7 @@ input[type="range"] { width: 100%; accent-color: var(--forest); }
 .account-card a.btn { display: block; text-align: center; text-decoration: none; }
 .account-card textarea,
 .account-card input[type="text"],
+.account-card input[type="email"],
 .account-card input[type="date"],
 .account-card input[type="number"] {
   width: 100%;
