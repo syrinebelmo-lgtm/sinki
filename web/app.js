@@ -101,6 +101,7 @@ const state = {
   transport: "transit",
   results: [],
   pool: [],
+  shownIds: [],
   loading: false,
   error: "",
   detail: null,
@@ -1771,6 +1772,45 @@ function pickThree(list, vibe) {
   }
   return chosen.slice(0, 3);
 }
+function shownIdSet() {
+  return new Set((state.shownIds || []).map(String));
+}
+function remainingPool() {
+  const seen = shownIdSet();
+  return (state.pool || []).filter((o) => o && o.id != null && !seen.has(String(o.id)));
+}
+function markShown(rows) {
+  const ids = shownIdSet();
+  (rows || []).forEach((o) => {
+    if (o && o.id != null) ids.add(String(o.id));
+  });
+  state.shownIds = [...ids];
+}
+function showPicked(rows) {
+  markShown(rows);
+  return recordFound(rows);
+}
+function searchVibe() {
+  return state.type === "soirees" ? "party" : state.vibe;
+}
+function proposeFromRemaining(count) {
+  if (askQuota()) return false;
+  const left = remainingPool();
+  if (!left.length) {
+    state.searchNote = t("nothing_new");
+    return false;
+  }
+  const picked = count === 1
+    ? [left[Math.floor(Math.random() * left.length)]]
+    : pickThree(left, searchVibe());
+  if (!picked.length) {
+    state.searchNote = t("nothing_new");
+    return false;
+  }
+  state.searchNote = "";
+  state.results = showPicked(picked);
+  return true;
+}
 function weatherLabel(code, temp) {
   if (temp == null) return "";
   const t = Math.round(temp) + "°";
@@ -2003,7 +2043,8 @@ function render() {
       <h1>${title}${listed && shown.length ? " · " + shown.length : ""}</h1>
       <p class="lead">📅 ${formatDate(state.date)} · ${budgetLine} · ${escapeHtml(t("vibe_" + vibeId(state.vibe)))}</p>
       ${intro}${altHtml}${shown.length ? shown.map((item) => cardHtml(item, "guided")).join("") : ""}
-      <button class="btn" data-act="dice">🎲 ${t("dice")}<small>${t("dice_sub")}</small></button>
+      ${listed ? "" : `<button class="btn secondary" data-act="another">${t("another")}</button>`}
+      <button class="btn" data-act="dice">🎲 ${t("dice")} <small>${t("dice_sub")}</small></button>
       ${listed ? "" : `<button class="btn sand" data-act="cheaper">💶 ${t("cheaper")}</button>`}
       <button class="btn outline" data-act="share" ${state.shareBusy ? "disabled" : ""}>${state.shareBusy ? t("share_busy") : t("share")}</button>
       ${state.shareHint ? `<p class="hint">${escapeHtml(state.shareHint)}</p>` : ""}
@@ -2573,12 +2614,13 @@ function bind() {
     if (act === "b60") { state.unlimited = false; state.budget = 60; render(); return; }
     if (act === "bunlim") { state.unlimited = true; render(); return; }
     if (act === "search" || act === "resume") { if (act === "resume") applyLast(); await runSearch(); return; }
-    if (act === "dice" && state.pool.length) {
-      if (askQuota()) return;
-      const ranked = pickThree(state.pool, state.type === "soirees" ? "party" : state.vibe);
-      const extra = state.pool.filter((o) => !ranked.some((r) => r.id === o.id));
-      const bag = ranked.concat(extra.slice(0, 8));
-      state.results = recordFound([bag[Math.floor(Math.random() * bag.length)]]);
+    if (act === "another") {
+      proposeFromRemaining((state.results || []).length === 1 ? 1 : 3);
+      render();
+      return;
+    }
+    if (act === "dice") {
+      proposeFromRemaining(1);
       render();
       return;
     }
@@ -3314,10 +3356,11 @@ async function runSearch() {
     if (state.radius < 80) alts.push({ label: t("alt_far"), radius: 80, indoor: "any", type: "all" });
     state.pool = rows.filter(respectsMandatoryFilters);
     state.searchNote = "";
+    state.shownIds = [];
     state.alts = state.pool.length ? [] : alts;
     state.nearestFallback = state.pool.some((o) => o.search_fallback === "nearest");
     if (state.nearestFallback) state.pool.sort((a, b) => (a.distance_km ?? 99) - (b.distance_km ?? 99));
-    state.results = recordFound(pickThree(state.pool, state.type === "soirees" ? "party" : state.vibe));
+    state.results = showPicked(pickThree(state.pool, searchVibe()));
     const w = await wRes.json();
     state.weather = weatherLabel(w.current?.weather_code, w.current?.temperature_2m);
     localStorage.setItem("sinki-last", JSON.stringify({

@@ -131,7 +131,9 @@ h1 { font-family: inherit; font-size: 28px; font-weight: 700; line-height: 1.15;
   font-size: 17px; font-weight: 600; margin-bottom: 10px; text-decoration: none; text-align: center;
 }
 .btn.secondary { background: var(--sage); color: var(--forest); }
-.btn[data-act="resume"] small {
+.btn small,
+.btn[data-act="resume"] small,
+.btn[data-act="dice"] small {
   display: block;
   margin-top: 4px;
   font-size: 14px;
