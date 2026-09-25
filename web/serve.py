@@ -2870,6 +2870,31 @@ def user_from_bearer(header):
     return data
 
 
+def purge_signed_in_user(user):
+    email = user.get("email") or ""
+    uid = user.get("id") or ""
+    try:
+        event_store.purge_user(email)
+    except Exception:
+        pass
+    local_auth.delete_account(email)
+    try:
+        members = supabase_select(
+            "group_members?member_token=eq." + urllib.parse.quote(str(uid)) + "&select=id"
+        )
+        for row in members:
+            supabase_request("DELETE", "group_members?id=eq." + urllib.parse.quote(str(row["id"])))
+    except Exception:
+        pass
+    try:
+        favs = supabase_select("favorites?user_id=eq." + urllib.parse.quote(str(uid)) + "&select=id")
+        for row in favs:
+            supabase_request("DELETE", "favorites?id=eq." + urllib.parse.quote(str(row["id"])))
+    except Exception:
+        pass
+    return {"ok": True}
+
+
 def fetch_outings_by_ids(ids):
     clean = []
     seen = set()
@@ -3112,6 +3137,10 @@ class Handler(SimpleHTTPRequestHandler):
             self.path = "/index.html"
         elif path_only in ("/download", "/get", "/app"):
             self.path = "/download.html"
+        elif path_only in ("/privacy",):
+            self.path = "/privacy.html"
+        elif path_only in ("/delete", "/delete-account"):
+            self.path = "/delete-account.html"
         elif path_only in ("/flyer", "/flyer-print"):
             self.path = "/flyer.html"
         return super().do_GET()
@@ -3154,7 +3183,16 @@ class Handler(SimpleHTTPRequestHandler):
     def end_headers(self):
         if not self.path.startswith("/api/"):
             self.send_header("Permissions-Policy", "geolocation=(self)")
-            if self.path.startswith("/index.html") or self.path.startswith("/download.html") or self.path in ("/", "/app.js", "/i18n.js", "/styles.css") or "/app.js?" in self.path or "/i18n.js?" in self.path or "/styles.css?" in self.path:
+            if (
+                self.path.startswith("/index.html")
+                or self.path.startswith("/download.html")
+                or self.path.startswith("/privacy.html")
+                or self.path.startswith("/delete-account.html")
+                or self.path in ("/", "/app.js", "/i18n.js", "/styles.css")
+                or "/app.js?" in self.path
+                or "/i18n.js?" in self.path
+                or "/styles.css?" in self.path
+            ):
                 self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
@@ -3207,7 +3245,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 109, "mail": mail_health()}
+                payload = {"ok": True, "app": "sinki", "v": 110, "mail": mail_health()}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
@@ -3351,28 +3389,18 @@ class Handler(SimpleHTTPRequestHandler):
                 if not user:
                     self.send_json({"error": "non connecté"}, 401)
                     return
-                email = user.get("email") or ""
-                uid = user.get("id") or ""
-                try:
-                    event_store.purge_user(email)
-                except Exception:
-                    pass
-                local_auth.delete_account(email)
-                try:
-                    members = supabase_select(
-                        "group_members?member_token=eq." + urllib.parse.quote(str(uid)) + "&select=id"
-                    )
-                    for row in members:
-                        supabase_request("DELETE", "group_members?id=eq." + urllib.parse.quote(str(row["id"])))
-                except Exception:
-                    pass
-                try:
-                    favs = supabase_select("favorites?user_id=eq." + urllib.parse.quote(str(uid)) + "&select=id")
-                    for row in favs:
-                        supabase_request("DELETE", "favorites?id=eq." + urllib.parse.quote(str(row["id"])))
-                except Exception:
-                    pass
-                payload = {"ok": True}
+                payload = purge_signed_in_user(user)
+            elif path == "/api/me/delete-otp" and post:
+                body = self.json_body()
+                email = auth_identity(body)
+                if not local_auth.email_has_account(email):
+                    raise ValueError("Aucun compte avec ce mail.")
+                session = verify_login_code(body)
+                user = user_from_bearer("Bearer " + str((session or {}).get("access_token") or ""))
+                if not user:
+                    self.send_json({"error": "non connecté"}, 401)
+                    return
+                payload = purge_signed_in_user(user)
             elif path == "/api/groups/message" and post:
                 body = self.json_body()
                 payload = post_group_message(

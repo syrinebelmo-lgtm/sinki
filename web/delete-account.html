@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#243D2E" />
+    <title>Supprimer un compte — Sinki</title>
+    <meta name="description" content="Supprimer un compte Sinki dans l’app, par email à bonjour@sinki.app, ou ici avec un code envoyé à ton email." />
+    <link rel="canonical" href="https://sinki.onrender.com/delete" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <style>
+      :root {
+        --cream: #f4efe6;
+        --paper: #fbf7f0;
+        --ink: #1c2a22;
+        --muted: #5c6b62;
+        --forest: #243d2e;
+        --sage: #d7e4d4;
+        --line: #e3d9c8;
+      }
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: radial-gradient(1200px 600px at 50% -10%, #e7efe4 0%, var(--cream) 55%);
+        color: var(--ink);
+      }
+      .wrap { max-width: 640px; margin: 0 auto; padding: 28px 20px 56px; }
+      h1 { font-size: 1.7rem; margin: 0 0 8px; color: var(--forest); }
+      h2 { font-size: 1.1rem; margin: 28px 0 8px; color: var(--forest); }
+      p, li { color: var(--muted); line-height: 1.5; }
+      p { margin: 0 0 12px; }
+      ul { margin: 0 0 12px; padding-left: 1.2em; }
+      a { color: var(--forest); }
+      .meta { font-size: 14px; }
+      .card {
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 18px;
+        margin-bottom: 16px;
+      }
+      label { display: block; font-weight: 600; margin: 12px 0 6px; color: var(--ink); }
+      input {
+        width: 100%;
+        border: 1.5px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 14px;
+        font: inherit;
+        background: #fff;
+      }
+      .btn {
+        display: block;
+        width: 100%;
+        border: 0;
+        border-radius: 16px;
+        padding: 14px 18px;
+        margin-top: 14px;
+        background: var(--forest);
+        color: #fff;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .btn[disabled] { opacity: 0.55; cursor: default; }
+      .btn.secondary { background: var(--sage); color: var(--forest); }
+      .status { min-height: 1.4em; margin: 10px 0 0; }
+      .status.err { color: #8a2b2b; }
+      .hidden { display: none; }
+      .en { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <p class="meta"><a href="/">Sinki</a> · <a href="/privacy">Confidentialité</a></p>
+      <h1>Supprimer un compte Sinki</h1>
+      <p>Tu peux le faire dans l’app, ici avec un code email, ou par mail. Mise à jour : 25 septembre 2026.</p>
+
+      <section class="card">
+        <h2>Dans l’app</h2>
+        <p>Ouvre Sinki → Compte → Supprimer mon compte. Cela efface le compte, l’avatar, tes événements, tes likes et commentaires, et les favoris / groupe liés à ce compte.</p>
+      </section>
+
+      <section class="card">
+        <h2>Sans l’app — email</h2>
+        <p>Écris à <a href="mailto:bonjour@sinki.app?subject=Suppression%20de%20compte%20Sinki">bonjour@sinki.app</a> depuis l’adresse du compte (ou en indiquant clairement cette adresse). Sujet utile : « Suppression de compte Sinki ».</p>
+        <p>C’est suffisant pour demander l’effacement si tu n’as plus l’app.</p>
+      </section>
+
+      <section class="card" id="web-form">
+        <h2>Sans l’app — code email</h2>
+        <p id="formLead">Si tu as encore accès à l’email du compte, un code à 6 chiffres confirme que c’est bien toi, puis le même effacement que dans l’app est lancé.</p>
+        <p id="formOffsite" class="hidden">Le formulaire sécurisé est sur <a href="https://sinki.onrender.com/delete">sinki.onrender.com/delete</a>. Tu peux aussi écrire à <a href="mailto:bonjour@sinki.app?subject=Suppression%20de%20compte%20Sinki">bonjour@sinki.app</a>.</p>
+        <form id="delForm">
+          <label for="email">Email du compte</label>
+          <input id="email" name="email" type="email" autocomplete="email" required placeholder="toi@mail.com" />
+          <button type="submit" class="btn" id="sendBtn">Envoyer le code</button>
+          <div id="codeBlock" class="hidden">
+            <label for="code">Code à 6 chiffres</label>
+            <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="••••••" />
+            <button type="button" class="btn" id="deleteBtn">Oui, tout effacer</button>
+          </div>
+          <p class="status" id="status" role="status"></p>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Ce qui est effacé</h2>
+        <ul>
+          <li>Compte, session, avatar.</li>
+          <li>Événements que tu as publiés, tes likes et commentaires.</li>
+          <li>Favoris et appartenance de groupe liés à ce compte côté serveur, quand ils existent.</li>
+        </ul>
+        <p>Te déconnecter ne suffit pas : cela enlève seulement la session sur l’appareil.</p>
+      </section>
+
+      <section class="card en" lang="en">
+        <h2>English</h2>
+        <p>In the app: Account → Delete my account.</p>
+        <p>Without the app: email <a href="mailto:bonjour@sinki.app?subject=Sinki%20account%20deletion">bonjour@sinki.app</a> from the account address, or use the form above (a 6-digit email code, then the same deletion as in the app).</p>
+        <p>Logging out is not deletion. Contact and privacy: <a href="/privacy">https://sinki.onrender.com/privacy</a>.</p>
+      </section>
+    </main>
+    <script>
+      (function () {
+        const liveHost = /(^|\.)onrender\.com$|^localhost$|^127\.0\.0\.1$/.test(location.hostname);
+        const form = document.getElementById("delForm");
+        const offsite = document.getElementById("formOffsite");
+        const lead = document.getElementById("formLead");
+        const status = document.getElementById("status");
+        const sendBtn = document.getElementById("sendBtn");
+        const deleteBtn = document.getElementById("deleteBtn");
+        const codeBlock = document.getElementById("codeBlock");
+        const emailEl = document.getElementById("email");
+        const codeEl = document.getElementById("code");
+
+        function setStatus(text, err) {
+          status.textContent = text || "";
+          status.className = "status" + (err ? " err" : "");
+        }
+
+        function apiError(data, fallback) {
+          return (data && data.error) || fallback;
+        }
+
+        if (!liveHost) {
+          form.classList.add("hidden");
+          lead.classList.add("hidden");
+          offsite.classList.remove("hidden");
+          return;
+        }
+
+        form.addEventListener("submit", async function (ev) {
+          ev.preventDefault();
+          const email = (emailEl.value || "").trim();
+          if (!email) return;
+          sendBtn.disabled = true;
+          setStatus("Envoi du code…");
+          try {
+            const r = await fetch("/api/auth/send", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email: email, mode: "login" }),
+            });
+            const data = await r.json().catch(function () { return {}; });
+            if (!r.ok) {
+              setStatus(apiError(data, "Impossible d’envoyer le code. Écris à bonjour@sinki.app."), true);
+              return;
+            }
+            codeBlock.classList.remove("hidden");
+            setStatus((data && data.email_note) || "Regarde tes mails et tes spams.");
+          } catch (e) {
+            setStatus("Réseau indisponible. Réessaie ou écris à bonjour@sinki.app.", true);
+          } finally {
+            sendBtn.disabled = false;
+          }
+        });
+
+        deleteBtn.addEventListener("click", async function () {
+          const email = (emailEl.value || "").trim();
+          const token = (codeEl.value || "").trim();
+          if (!email || token.length < 6) {
+            setStatus("Email et code à 6 chiffres requis.", true);
+            return;
+          }
+          deleteBtn.disabled = true;
+          setStatus("Vérification et suppression…");
+          try {
+            const r = await fetch("/api/me/delete-otp", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email: email, token: token }),
+            });
+            const data = await r.json().catch(function () { return {}; });
+            if (!r.ok) {
+              setStatus(apiError(data, "La suppression a échoué. Réessaie ou écris à bonjour@sinki.app."), true);
+              return;
+            }
+            setStatus("Compte supprimé. Tu peux fermer cette page.");
+            form.reset();
+            codeBlock.classList.add("hidden");
+          } catch (e) {
+            setStatus("Réseau indisponible. Réessaie ou écris à bonjour@sinki.app.", true);
+          } finally {
+            deleteBtn.disabled = false;
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

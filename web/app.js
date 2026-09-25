@@ -1279,6 +1279,9 @@ function avatarHtml(acc, cls) {
 function setRow(act, label, extra) {
   return `<button type="button" class="set-row" data-act="${act}"><span>${escapeHtml(label)}</span><span class="set-extra">${extra ? escapeHtml(extra) : ""} ›</span></button>`;
 }
+function setLinkRow(href, label) {
+  return `<a class="set-row" href="${escapeHtml(href)}"><span>${escapeHtml(label)}</span><span class="set-extra">↗</span></a>`;
+}
 function settingsPage() {
   const view = state.settingsView || "menu";
   const acc = state.account;
@@ -1459,6 +1462,7 @@ function settingsPage() {
       <h1>${t("set_privacy_title")}</h1>
       <p class="lead">${t("set_privacy_lead")}</p>
       <div class="account-card">${legalHtml("legal_privacy")}</div>
+      ${setLinkRow("/privacy", t("set_privacy_public"))}
       ${navHtml("home")}
     </div>`;
   }
@@ -1518,6 +1522,8 @@ function settingsPage() {
       ${setRow("set-help", t("set_help"))}
       ${setRow("set-contact", t("set_contact"))}
       ${setRow("set-privacy", t("set_privacy"))}
+      ${setLinkRow("/privacy", t("set_privacy_public"))}
+      ${setLinkRow("/delete", t("set_delete_public"))}
       ${setRow("set-terms", t("set_terms"))}
       ${setRow("set-purchases", t("set_purchases"))}
       ${setRow("set-legal", t("set_legal"))}
@@ -1547,6 +1553,7 @@ function accountPage() {
         <button class="btn secondary" data-act="account-delete">${t("account_delete_yes")}</button>
         <button class="ghost" data-act="account-delete-cancel">${t("close")}</button>`
           : `<button class="ghost" data-act="account-delete-ask">${t("account_delete")}</button>`}
+        <p class="hint"><a href="/delete">${escapeHtml(t("set_delete_public"))}</a></p>
       </div>
       ${navHtml("home")}
     </div>`;
@@ -2355,7 +2362,7 @@ function bind() {
       return;
     }
     if (act === "auth-verify") { await verifyLoginCode(); return; }
-    if (act === "logout") { logoutAccount(); return; }
+    if (act === "logout") { await logoutAccount(); return; }
     if (act === "account-delete-ask") { state.accountDeleteAsk = true; render(); return; }
     if (act === "account-delete-cancel") { state.accountDeleteAsk = false; render(); return; }
     if (act === "account-delete") { await deleteAccountForever(); return; }
@@ -3281,17 +3288,25 @@ async function verifyLoginCode() {
   }
 }
 
-function logoutAccount() {
+async function logoutAccount() {
+  if (state._loggingOut) return;
+  state._loggingOut = true;
   const headers = authHeaders();
+  try { await persistAccount(); } catch { /* still log out */ }
+  if (headers.Authorization) {
+    await fetch("/api/auth/logout", { method: "POST", headers }).catch(() => {});
+  }
   state.account = null;
   state.session = null;
+  state.favs = [];
+  state.plans = [];
   state.authView = "closed";
   state.accountDeleteAsk = false;
   localStorage.removeItem("sinki-session");
   localStorage.removeItem("sinki-account");
-  if (headers.Authorization) {
-    fetch("/api/auth/logout", { method: "POST", headers }).catch(() => {});
-  }
+  localStorage.removeItem("sinki-favs");
+  localStorage.removeItem("sinki-plans");
+  state._loggingOut = false;
   render();
 }
 
@@ -3566,7 +3581,7 @@ async function persistAccount() {
     plans: state.plans.map((x) => ({ id: x.id, planned_for: x.planned_for, snapshot: x })),
   };
   const r = await fetch("/api/me/sync", { method: "POST", headers: authHeaders(), body: JSON.stringify(body) });
-  if (r.status === 401) logoutAccount();
+  if (r.status === 401 && !state._loggingOut) logoutAccount();
 }
 
 async function bootAccount() {

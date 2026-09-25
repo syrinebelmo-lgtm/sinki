@@ -173,6 +173,8 @@ fr: {
   set_contact_btn: "Écrire à Sinki",
   set_privacy_title: "Confidentialité",
   set_privacy_lead: "Ce que Sinki garde, pourquoi, et comment tu le supprimes.",
+  set_privacy_public: "Politique publique",
+  set_delete_public: "Supprimer un compte (web)",
   set_terms_title: "Conditions d’utilisation",
   set_terms_lead: "Sinki, c’est des sorties réelles, ouvert à tous, et pas d’invention.",
   set_purchases_title: "Achats et abonnements",
@@ -199,6 +201,8 @@ Durées : le compte et les événements tant que tu ne les supprimes pas (ou qu�
 Tes droits : accès, rectification (profil), opposition (ne pas activer le GPS, changer le pays), effacement via « Supprimer mon compte ». Écris à bonjour@sinki.app.
 
 Sinki est ouvert à tous. Pas de SDK publicitaire ni d’outil d’analytics tiers dans l’app actuelle.
+
+Page publique : https://sinki.onrender.com/privacy. Suppression hors de l’app : https://sinki.onrender.com/delete ou bonjour@sinki.app.
 
 Cette notice décrit le produit tel qu’il existe aujourd’hui. Elle sera mise à jour si des stores, paiements ou SDK sont ajoutés.`,
   legal_terms: `Sinki est ouvert à tous.
@@ -227,7 +231,9 @@ Contact : bonjour@sinki.app
 
 Hébergement : Render (offre gratuite, l’app s’endort après 15 min sans visite) ou le serveur local. Catalogue / groupes : Supabase si les clés sont présentes.
 
-Pas de société publiée ici au-delà de ce contact. Compléter le nom légal et l’adresse avant une mise en store.
+L’éditeur est l’opérateur de Sinki. Le nom légal et l’adresse postale seront complétés ici ; rien n’est inventé (pas de société ni de SIRET fictifs).
+
+Pages publiques : https://sinki.onrender.com/privacy et https://sinki.onrender.com/delete.
 
 Droit applicable : France, sauf mention contraire.`,
   account_logout_hint: "Te déconnecter enlève la session sur cet appareil. Ton compte reste.",
@@ -501,6 +507,8 @@ en: {
   set_contact_btn: "Email Sinki",
   set_privacy_title: "Privacy",
   set_privacy_lead: "What Sinki keeps, why, and how you delete it.",
+  set_privacy_public: "Public privacy policy",
+  set_delete_public: "Delete account (web)",
   set_terms_title: "Terms of use",
   set_terms_lead: "Sinki is real outings, open to everyone, and no invented places.",
   set_purchases_title: "Purchases & subscriptions",
@@ -527,6 +535,8 @@ Retention: account and events until you delete them (or they are rejected / expi
 Your rights: access, correction (profile), objection (don’t use GPS, change country), erasure via “Delete my account”. Write to bonjour@sinki.app.
 
 Sinki is open to everyone. No ad SDK and no third-party analytics SDK in the current app.
+
+Public page: https://sinki.onrender.com/privacy. Deletion without the app: https://sinki.onrender.com/delete or bonjour@sinki.app.
 
 This notice describes the product as it exists today. It will be updated if stores, payments, or SDKs are added.`,
   legal_terms: `Sinki is open to everyone.
@@ -555,7 +565,9 @@ Contact: bonjour@sinki.app
 
 Hosting: Render (free plan; the app sleeps after 15 minutes idle) or the local server. Catalog / groups: Supabase if keys are present.
 
-No company details are published here beyond this contact. Add legal name and address before a store submission.
+The publisher is the Sinki operator. Legal name and postal address will be completed here; nothing is invented (no fictional company or SIRET).
+
+Public pages: https://sinki.onrender.com/privacy and https://sinki.onrender.com/delete.
 
 Governing law: France, unless stated otherwise.`,
   account_logout_hint: "Logging out removes the session on this device. Your account stays.",

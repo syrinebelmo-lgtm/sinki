@@ -444,6 +444,7 @@ input[type="range"] { width: 100%; accent-color: var(--forest); }
   cursor: pointer;
 }
 .set-row .set-extra { color: var(--muted); font-size: 13px; white-space: nowrap; }
+a.set-row { text-decoration: none; color: inherit; }
 html[dir="rtl"] .set-row { text-align: right; }
 .avatar, .avatar-letter {
   width: 88px;
