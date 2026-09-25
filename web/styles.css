@@ -200,7 +200,16 @@ input[type="text"], input[type="date"], input[type="email"], input[type="tel"] {
   background: var(--sage); border-radius: 16px; padding: 12px 14px;
 }
 .people span { font-weight: 600; }
-.budget-val { font-family: inherit; font-size: 28px; font-weight: 700; letter-spacing: -0.04em; margin: 0 0 8px; }
+.budget-line { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; }
+.budget-num {
+  width: 5.2em;
+  font-family: inherit;
+  font-size: 28px; font-weight: 700; letter-spacing: -0.04em;
+  border: 1.5px solid var(--ink); border-radius: 12px;
+  padding: 4px 8px; background: #fff; color: var(--ink);
+}
+.budget-num:disabled { opacity: 0.5; }
+.budget-val { font-family: inherit; font-size: 28px; font-weight: 700; letter-spacing: -0.04em; margin: 0; }
 input[type="range"] { width: 100%; accent-color: var(--forest); }
 .card { background: #fff; border-radius: 22px; overflow: hidden; margin: 16px 0; box-shadow: 0 10px 30px rgba(36, 61, 46, 0.08); }
 .cover { height: 168px; background: #d5e0d2 center/cover no-repeat; position: relative; }

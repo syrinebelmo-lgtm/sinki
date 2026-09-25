@@ -498,6 +498,35 @@ function moneyNum(n) {
   if (!Number.isFinite(v)) return 0;
   return Math.abs(v - Math.round(v)) < 0.05 ? Math.round(v) : Math.round(v * 10) / 10;
 }
+function clampBudget(n) {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v)) return null;
+  return Math.max(0, Math.min(200, v));
+}
+function budgetCaption() {
+  if (state.unlimited) return t("unlimited");
+  if (Number(state.budget) === 0) return t("free");
+  return t("budget_max", { n: state.budget });
+}
+function paintBudget(opts) {
+  const skipNum = opts && opts.skipNum;
+  const val = $("#budget-val");
+  if (val) val.textContent = budgetCaption();
+  const range = $("#budget");
+  if (range) range.value = String(state.unlimited ? 200 : state.budget);
+  const num = $("#budget-num");
+  if (num) {
+    num.disabled = !!state.unlimited;
+    if (!skipNum) num.value = state.unlimited ? "" : String(state.budget);
+  }
+}
+function setExactBudget(raw, opts) {
+  const v = clampBudget(raw);
+  if (v == null) return;
+  state.unlimited = false;
+  state.budget = v;
+  paintBudget(opts);
+}
 function euroRange(a, b) {
   if (a === 0 && b === 0) return t("free");
   if (a === 0 && b > 0) return "<1–" + b + " €";
@@ -1918,8 +1947,11 @@ function render() {
         <button class="chip${state.date === addDays(7) ? " on" : ""}" data-act="date-week">${t("week")}</button>
       </div>
       <label>${t("budget_pp")}</label>
-      <div class="budget-val">${state.unlimited ? t("unlimited") : state.budget === 0 ? t("free") : t("budget_max", { n: state.budget })}</div>
-      <input type="range" id="budget" min="0" max="200" step="5" value="${state.unlimited ? 200 : state.budget}" />
+      <div class="budget-line">
+        <input type="number" id="budget-num" class="budget-num" min="0" max="200" step="1" inputmode="numeric" value="${state.unlimited ? "" : state.budget}" ${state.unlimited ? "disabled" : ""} aria-label="${t("budget_pp")}" />
+        <div class="budget-val" id="budget-val">${budgetCaption()}</div>
+      </div>
+      <input type="range" id="budget" min="0" max="200" step="1" value="${state.unlimited ? 200 : state.budget}" />
       <div class="row">
         <button class="chip${!state.unlimited && state.budget === 0 ? " on" : ""}" data-act="b0">${t("free")}</button>
         <button class="chip${!state.unlimited && state.budget === 25 ? " on" : ""}" data-act="b25">25 €</button>
@@ -2771,7 +2803,23 @@ function bind() {
   const date = $("#date");
   if (date) date.onchange = () => { state.date = date.value; };
   const budget = $("#budget");
-  if (budget) budget.oninput = () => { state.unlimited = false; state.budget = Number(budget.value); $(".budget-val").textContent = state.budget === 0 ? t("free") : t("budget_max", { n: state.budget }); };
+  if (budget) budget.oninput = () => setExactBudget(budget.value);
+  const budgetNum = $("#budget-num");
+  if (budgetNum) {
+    budgetNum.oninput = () => {
+      if (budgetNum.value === "") return;
+      setExactBudget(budgetNum.value, { skipNum: true });
+    };
+    budgetNum.onchange = () => {
+      if (budgetNum.value === "") {
+        state.unlimited = false;
+        state.budget = 0;
+        paintBudget();
+        return;
+      }
+      setExactBudget(budgetNum.value);
+    };
+  }
   const exploreq = $("#exploreq");
   if (exploreq) {
     exploreq.oninput = () => {
