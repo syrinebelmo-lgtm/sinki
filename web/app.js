@@ -155,6 +155,8 @@ const state = {
   authPseudo: "",
   authCode: "",
   authBusy: false,
+  _authSendInFlight: false,
+  _authSending: false,
   authError: "",
   authHint: "",
   supportBusy: false,
@@ -1262,11 +1264,14 @@ function friendlyAuthError(err) {
   if (s.includes("déjà pris") || s.includes("already taken") || s === "taken") return t("err_pseudo_taken");
   if (/rate|over_email_send|Trop de codes|Too many codes/i.test(s)) {
     const mins = s.match(/(\d+)\s*min/i);
-    if (mins) return t("err_mail_rate", { min: mins[1] });
-    if (/heure|hour/i.test(s)) return t("err_mail_rate_hour");
+    if (mins) {
+      const n = Number(mins[1]);
+      if (n >= 50) return t("err_mail_rate", { min: 15 });
+      return t("err_mail_rate", { min: mins[1] });
+    }
     return t("err_mail_rate", { min: 15 });
   }
-  if (/n’est pas configuré|n'est pas configuré|isn’t configured|is not configured/i.test(s)) return t("err_mail_off");
+  if (/n’est pas configuré|n'est pas configuré|isn’t configured|is not configured|pas de Resend|no Resend/i.test(s)) return t("err_mail_off");
   if (/RESEND_API_KEY|Resend|SMTP bloqué/i.test(s)) return s;
   if (s.trim().startsWith("{")) return t("err_send_code");
   return s || t("err_send_code");
@@ -1289,6 +1294,13 @@ function avatarHtml(acc, cls) {
 function setRow(act, label, extra) {
   return `<button type="button" class="set-row" data-act="${act}"><span>${escapeHtml(label)}</span><span class="set-extra">${extra ? escapeHtml(extra) : ""} ›</span></button>`;
 }
+function helpMailtoHref() {
+  const mail = t("set_contact_mail");
+  return "mailto:" + mail + "?subject=" + encodeURIComponent(t("set_help_subject"));
+}
+function setMailRow(label, mail) {
+  return `<a class="set-row" href="${escapeHtml(helpMailtoHref())}"><span>${escapeHtml(label)}</span><span class="set-extra">${escapeHtml(mail)} ↗</span></a>`;
+}
 function supportContactHtml() {
   const mail = t("set_contact_mail");
   const hint = state.supportHint
@@ -1302,13 +1314,17 @@ function supportContactHtml() {
         <button class="btn stack-gap" data-act="support-send" ${state.supportBusy ? "disabled" : ""}>${state.supportBusy ? t("set_support_sending") : t("set_support_send")}</button>` : hint;
   return `<div class="account-card">
         <p class="hint" style="margin-top:0">${escapeHtml(mail)}</p>
-        <a class="btn stack-gap" href="mailto:${escapeHtml(mail)}?subject=Sinki">${t("set_contact_btn")}</a>
+        <a class="btn stack-gap" href="${escapeHtml(helpMailtoHref())}">${t("set_contact_btn")}</a>
         <button type="button" class="btn secondary" data-act="copy-support-mail">${t("set_contact_copy")}</button>
         ${form}
       </div>`;
 }
 function setLinkRow(href, label) {
   return `<a class="set-row" href="${escapeHtml(href)}"><span>${escapeHtml(label)}</span><span class="set-extra">↗</span></a>`;
+}
+function authSendLabel(sendingText) {
+  if (!state.authBusy) return escapeHtml(sendingText);
+  return `<span class="btn-spinner" aria-hidden="true"></span>${escapeHtml(t("sending"))}`;
 }
 function settingsPage() {
   const view = state.settingsView || "menu";
@@ -1478,6 +1494,14 @@ function settingsPage() {
       <h1>${t("set_contact_title")}</h1>
       <p class="lead">${t("set_contact_lead")}</p>
       ${supportContactHtml()}
+      <div class="account-card">
+        <p class="hint" style="margin-top:0"><strong>${t("set_help_q1")}</strong></p>
+        <p class="hint">${t("set_help_a1")}</p>
+        <p class="hint"><strong>${t("set_help_q2")}</strong></p>
+        <p class="hint">${t("set_help_a2")}</p>
+        <p class="hint"><strong>${t("set_help_q3")}</strong></p>
+        <p class="hint">${t("set_help_a3")}</p>
+      </div>
       ${navHtml("home")}
     </div>`;
   }
@@ -1543,7 +1567,7 @@ function settingsPage() {
       ${setRow("set-lang", t("set_lang_row"), lang)}
     </div>
     <div class="set-list">
-      ${setRow("set-help", t("set_help"))}
+      ${setMailRow(t("set_help"), t("set_contact_mail"))}
       ${setRow("set-contact", t("set_contact"))}
       ${setRow("set-privacy", t("set_privacy"))}
       ${setLinkRow("/privacy", t("set_privacy_public"))}
@@ -1594,7 +1618,7 @@ function accountPage() {
         <input type="text" id="authcode" inputmode="numeric" autocomplete="one-time-code" placeholder="••••••" value="" />
         <p class="hint">${escapeHtml(state.authHint || t("sent_to", { email: state.authEmail }))}</p>
         ${err}
-        <button class="btn stack-gap" data-act="auth-verify" ${state.authBusy ? "disabled" : ""}>${state.authBusy ? t("verifying") : t("verify")}</button>
+        <button class="btn stack-gap${state.authBusy ? " busy" : ""}" data-act="auth-verify" ${state.authBusy ? "disabled" : ""}>${state.authBusy ? `<span class="btn-spinner" aria-hidden="true"></span>${escapeHtml(t("verifying"))}` : t("verify")}</button>
         <button class="ghost" data-act="auth-open">${t("change_email")}</button>
       </div>
       ${navHtml("home")}
@@ -1624,7 +1648,7 @@ function accountPage() {
         <label>${t("pseudo")}</label>
         <input type="text" id="authpseudo" autocomplete="username" placeholder="${escapeHtml(t("pseudo_ph"))}" value="${escapeHtml(state.authPseudo)}" />
         ${err}
-        <button class="btn stack-gap" data-act="auth-send" ${state.authBusy ? "disabled" : ""}>${state.authBusy ? t("sending") : t("send_code")}</button>
+        <button class="btn stack-gap${state.authBusy ? " busy" : ""}" data-act="auth-send" ${state.authBusy ? "disabled" : ""}>${authSendLabel(t("send_code"))}</button>
         <button class="ghost" data-act="auth-back-names">${t("back_choices")}</button>
       </div>
       ${navHtml("home")}
@@ -1639,7 +1663,7 @@ function accountPage() {
         <label>${t("your_email")}</label>
         <input type="email" id="authemail" placeholder="toi@mail.com" value="${escapeHtml(state.authEmail)}" autocomplete="email" />
         ${hint}${err}
-        <button class="btn stack-gap" data-act="auth-next-contact" ${state.authBusy ? "disabled" : ""}>${state.authBusy ? t("sending") : (mode === "signup" ? t("continue") : t("send_code"))}</button>
+        <button class="btn stack-gap${state.authBusy ? " busy" : ""}" data-act="auth-next-contact" ${state.authBusy ? "disabled" : ""}>${state.authBusy && mode !== "signup" ? authSendLabel(t("send_code")) : (mode === "signup" ? t("continue") : t("send_code"))}</button>
         <button class="ghost" data-act="auth-close">${t("back_choices")}</button>
       </div>
       ${navHtml("home")}
@@ -2366,11 +2390,12 @@ function bind() {
     if (act === "auth-back-names") { state.authView = "names"; state.authError = ""; render(); return; }
     if (act === "auth-close") { state.authView = "closed"; state.authError = ""; state.authHint = ""; render(); return; }
     if (act === "auth-next-contact") {
-      if (state.authBusy) return;
+      if (state.authBusy || state._authSendInFlight) return;
       state.authEmail = ($("#authemail") && $("#authemail").value) || state.authEmail;
       if (!validEmail(state.authEmail)) { state.authError = t("err_mail"); render(); return; }
       state.authError = "";
       if (state.authMode === "signup") { state.authView = "names"; render(); return; }
+      lockAuthSendButton(el);
       await sendLoginCode();
       return;
     }
@@ -2384,11 +2409,11 @@ function bind() {
       return;
     }
     if (act === "auth-send") {
-      if (state.authBusy) return;
+      if (state.authBusy || state._authSendInFlight) return;
       state.authPseudo = (($("#authpseudo") && $("#authpseudo").value) || state.authPseudo).trim();
       if (state.authMode === "signup" && !validPseudo(state.authPseudo)) { state.authError = t("err_pseudo"); render(); return; }
+      lockAuthSendButton(el);
       if (state.authMode === "signup") {
-        state.authBusy = true;
         state.authError = "";
         render();
         try {
@@ -2397,11 +2422,15 @@ function bind() {
           if (info.taken) {
             state.authError = t("err_pseudo_taken");
             state.authBusy = false;
+            state._authSendInFlight = false;
+            state._authSending = false;
             render();
             return;
           }
         } catch (_) {
           state.authBusy = false;
+          state._authSendInFlight = false;
+          state._authSending = false;
         }
       }
       await sendLoginCode();
@@ -3265,8 +3294,20 @@ async function runSearch() {
   }
 }
 
+function lockAuthSendButton(el) {
+  state._authSendInFlight = true;
+  state.authBusy = true;
+  if (el) {
+    el.disabled = true;
+    el.classList.add("busy");
+    el.setAttribute("aria-busy", "true");
+    el.innerHTML = `<span class="btn-spinner" aria-hidden="true"></span>${escapeHtml(t("sending"))}`;
+  }
+}
+
 async function sendLoginCode() {
-  if (state._authSendInFlight) return;
+  if (state._authSending) return;
+  state._authSending = true;
   state._authSendInFlight = true;
   state.authEmail = (($("#authemail") && $("#authemail").value) || state.authEmail || "").trim();
   state.authBusy = true;
@@ -3293,6 +3334,7 @@ async function sendLoginCode() {
   } catch (err) {
     state.authError = String(err.message || err);
   } finally {
+    state._authSending = false;
     state._authSendInFlight = false;
     state.authBusy = false;
     render();

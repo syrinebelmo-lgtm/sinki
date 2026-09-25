@@ -1949,9 +1949,10 @@ def auth_error_code(payload):
     return str(payload.get("error_code") or payload.get("code") or "")
 
 
-MAIL_NOT_CONFIGURED = "L’envoi de mail n’est pas configuré. Réessaie plus tard, ou contacte l’aide dans Réglages."
+MAIL_NOT_CONFIGURED = "L’envoi de mail n’est pas configuré. Écris à thesinkiisinki@gmail.com (Réglages → Aide)."
 SUPPORT_TO = "thesinkiisinki@gmail.com"
-MAIL_TIMEOUT = 8
+MAIL_TIMEOUT = 6
+RESEND_MISSING = "Pas de Resend sur ce serveur. L’envoi de mail n’est pas configuré. Écris à thesinkiisinki@gmail.com."
 
 
 def running_on_render():
@@ -2000,16 +2001,13 @@ def rate_wait_sec(payload, raw=""):
             return max(1, int(float(val)))
         except (TypeError, ValueError):
             continue
-    text = (str(auth_error_code(blob)) + " " + str(blob.get("msg") or "") + " " + str(raw or "")).lower()
-    if "over_email_send" in text or "hour" in text or "heure" in text:
-        return 60 * 60
     return 15 * 60
 
 
 def otp_rate_error(wait_sec):
     mins = max(1, int(math.ceil(float(wait_sec) / 60.0)))
     if mins >= 50:
-        return "Trop de codes d’un coup. Attends environ une heure et réessaie."
+        mins = 15
     return "Trop de codes d’un coup. Réessaie dans %s min." % mins
 
 
@@ -2032,7 +2030,7 @@ def friendly_auth_error(payload, raw="", extra=""):
     if extra:
         return str(extra)
     if running_on_render() and not has_resend_key():
-        return MAIL_NOT_CONFIGURED
+        return RESEND_MISSING
     return "Impossible d’envoyer le code. Réessaie."
 
 
@@ -2457,7 +2455,9 @@ def send_login_code(body, host_header=""):
     if nick and local_auth.pseudo_taken(nick, email):
         raise ValueError("Ce pseudo est déjà pris. Choisis-en un autre.")
     on_render = running_on_render()
-    if on_render and not has_resend_key() and not supabase_mail_ready():
+    if on_render and not has_resend_key():
+        raise ValueError(RESEND_MISSING)
+    if not on_render and not has_resend_key() and not has_smtp() and sys.platform != "darwin" and not supabase_mail_ready():
         raise ValueError(MAIL_NOT_CONFIGURED)
     try:
         otp = local_auth.request_code(
@@ -2473,28 +2473,11 @@ def send_login_code(body, host_header=""):
             raise ValueError("Ce pseudo est déjà pris. Choisis-en un autre.")
         raise
     if on_render:
-        if has_resend_key():
-            mailed, mail_err = send_sinki_mail(email, otp, channels=["resend"])
-            if mailed:
-                local_auth.record_otp_send(email)
-                return {"ok": True, "email_note": "Regarde tes mails et tes spams. Sinki t’a envoyé un code à 6 chiffres."}
-            raise ValueError(mail_err or MAIL_NOT_CONFIGURED)
-        try:
-            send_supabase_otp_fast(email, prefer_create=(mode == "signup" or not exists))
-            local_auth.mark_pending_external(email, "gotrue")
+        mailed, mail_err = send_sinki_mail(email, otp, channels=["resend"])
+        if mailed:
             local_auth.record_otp_send(email)
-            return {
-                "ok": True,
-                "email_note": (
-                    "Regarde tes mails et tes spams. Tu dois y trouver un code à 6 chiffres "
-                    "(parfois dans un mail « Magic Link » Supabase)."
-                ),
-            }
-        except urllib.error.HTTPError as exc:
-            payload, raw = http_error_body(exc)
-            raise ValueError(friendly_auth_error(payload, raw))
-        except Exception:
-            raise ValueError(MAIL_NOT_CONFIGURED)
+            return {"ok": True, "email_note": "Regarde tes mails et tes spams. Sinki t’a envoyé un code à 6 chiffres."}
+        raise ValueError(mail_err or RESEND_MISSING)
     mailed, mail_err = send_sinki_mail(email, otp)
     if mailed:
         local_auth.record_otp_send(email)
@@ -3371,7 +3354,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 112, "mail": mail_health()}
+                payload = {"ok": True, "app": "sinki", "v": 113, "mail": mail_health()}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":

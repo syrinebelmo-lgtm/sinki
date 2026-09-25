@@ -143,6 +143,19 @@ h1 { font-family: inherit; font-size: 28px; font-weight: 700; line-height: 1.15;
 .btn.outline { background: #fff; color: var(--ink); border: 1.5px solid var(--line); }
 .btn-price { display: block; margin-top: 4px; font-size: 14px; font-weight: 500; opacity: 0.9; }
 .btn:disabled { opacity: 0.45; }
+.btn.busy { pointer-events: none; }
+.btn-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  vertical-align: -3px;
+  animation: btn-spin 0.6s linear infinite;
+}
+@keyframes btn-spin { to { transform: rotate(360deg); } }
 .ghost { background: none; border: 0; color: var(--muted); text-decoration: underline; padding: 8px; width: 100%; }
 .page {
   padding: 8px 20px 28px;
