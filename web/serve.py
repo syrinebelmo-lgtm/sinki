@@ -655,7 +655,40 @@ def diversify_categories(rows, limit=120):
     return mixed
 
 
-_tls = threading.local()
+_SB_POOL = []
+_SB_POOL_LOCK = threading.Lock()
+_SB_POOL_MAX = 6
+
+
+def _sb_acquire(host, port, timeout):
+    with _SB_POOL_LOCK:
+        while _SB_POOL:
+            conn = _SB_POOL.pop()
+            try:
+                if conn.sock is not None:
+                    conn.timeout = timeout
+                    return conn
+            except Exception:
+                pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return http.client.HTTPSConnection(host, port, timeout=timeout)
+
+
+def _sb_release(conn, keep=True):
+    if conn is None:
+        return
+    if keep:
+        with _SB_POOL_LOCK:
+            if len(_SB_POOL) < _SB_POOL_MAX:
+                _SB_POOL.append(conn)
+                return
+    try:
+        conn.close()
+    except Exception:
+        pass
 
 
 def supabase_request(method, path, body=None):
@@ -674,27 +707,25 @@ def supabase_request(method, path, body=None):
     timeout = 12 if method == "GET" else 60
     last_err = None
     for attempt in (0, 1):
-        conn = getattr(_tls, "sb", None)
-        if conn is None:
-            conn = http.client.HTTPSConnection(parsed.hostname, parsed.port or 443, timeout=timeout)
-            _tls.sb = conn
+        conn = _sb_acquire(parsed.hostname, parsed.port or 443, timeout)
         try:
             conn.request(method, target, body=data, headers=headers)
             resp = conn.getresponse()
             raw = resp.read()
+            _sb_release(conn, True)
             if resp.status >= 400:
                 raise urllib.error.HTTPError(url, resp.status, resp.reason, resp.headers, io.BytesIO(raw))
             text = raw.decode("utf-8")
             return json.loads(text) if text else []
         except urllib.error.HTTPError:
             raise
+        except TimeoutError as exc:
+            last_err = exc
+            _sb_release(conn, False)
+            raise
         except (http.client.HTTPException, ConnectionError, BrokenPipeError, OSError) as exc:
             last_err = exc
-            try:
-                conn.close()
-            except Exception:
-                pass
-            _tls.sb = None
+            _sb_release(conn, False)
             if attempt:
                 raise
     if last_err:
@@ -722,9 +753,9 @@ def supabase_outings(filters, limit, pictured_only=False):
     limit = max(1, min(int(limit or 80), 80))
     base = "outings?select=" + SELECT + "&is_active=eq.true" + filters
     pictured = safe_select(base + "&photo_url=like.http*&limit=" + str(limit))
-    if pictured_only:
+    if pictured_only or len(pictured) >= limit:
         return pictured
-    rest = safe_select(base + "&photo_url=is.null&limit=" + str(limit))
+    rest = safe_select(base + "&photo_url=is.null&limit=" + str(max(1, min(limit - len(pictured), 40))))
     return pictured + rest
 
 
@@ -1140,13 +1171,24 @@ SELECT = (
 )
 
 
+CITY_CC_CACHE = {}
+CITY_CC_LOCK = threading.Lock()
+
+
 def city_country(city_id):
     if not city_id:
         return None
+    key = str(city_id)
+    with CITY_CC_LOCK:
+        if key in CITY_CC_CACHE:
+            return CITY_CC_CACHE[key]
     rows = supabase_select(
-        "cities?id=eq." + urllib.parse.quote(str(city_id)) + "&select=id,country_code"
+        "cities?id=eq." + urllib.parse.quote(key) + "&select=id,country_code"
     )
-    return (rows[0].get("country_code") if rows else None)
+    cc = rows[0].get("country_code") if rows else None
+    with CITY_CC_LOCK:
+        CITY_CC_CACHE[key] = cc
+    return cc
 
 
 def swiss_city_ids():
@@ -1157,7 +1199,87 @@ def swiss_city_ids():
     ]
 
 
+OUTINGS_CACHE = {}
+OUTINGS_CACHE_LOCK = threading.Lock()
+OUTINGS_CACHE_TTL = 45
+OUTINGS_INFLIGHT = {}
+OUTINGS_INFLIGHT_LOCK = threading.Lock()
+
+
+def _outings_cache_key(params):
+    def one(name, default=""):
+        vals = params.get(name) or [default]
+        return str((vals[0] if vals else default) or "")
+
+    try:
+        lat = "%.3f" % round(float(one("lat")), 3)
+        lon = "%.3f" % round(float(one("lon")), 3)
+    except (TypeError, ValueError):
+        lat = lon = ""
+    try:
+        radius = "%.1f" % round(float(one("radius_km", "15")), 1)
+    except ValueError:
+        radius = "15.0"
+    return (
+        one("city_id"),
+        lat,
+        lon,
+        radius,
+        one("budget"),
+        one("type", "all"),
+        one("indoor", "any"),
+        one("need_photo", "1"),
+    )
+
+
+def _outings_copies(rows):
+    return [dict(row) for row in rows]
+
+
 def fetch_outings(params):
+    key = _outings_cache_key(params)
+    now = time.time()
+    with OUTINGS_CACHE_LOCK:
+        hit = OUTINGS_CACHE.get(key)
+        if hit and now - hit[0] < OUTINGS_CACHE_TTL:
+            return _outings_copies(hit[1])
+    wait_for = None
+    mine = False
+    with OUTINGS_INFLIGHT_LOCK:
+        slot = OUTINGS_INFLIGHT.get(key)
+        if slot is None:
+            slot = {"event": threading.Event(), "rows": None}
+            OUTINGS_INFLIGHT[key] = slot
+            mine = True
+        else:
+            wait_for = slot
+    if not mine:
+        wait_for["event"].wait(20)
+        if wait_for["rows"] is not None:
+            return _outings_copies(wait_for["rows"])
+        with OUTINGS_CACHE_LOCK:
+            hit = OUTINGS_CACHE.get(key)
+            if hit:
+                return _outings_copies(hit[1])
+        return []
+    try:
+        rows = fetch_outings_fresh(params)
+        with OUTINGS_CACHE_LOCK:
+            OUTINGS_CACHE[key] = (time.time(), _outings_copies(rows))
+            if len(OUTINGS_CACHE) > 200:
+                oldest = sorted(OUTINGS_CACHE.items(), key=lambda item: item[1][0])[:40]
+                for old_key, _ in oldest:
+                    OUTINGS_CACHE.pop(old_key, None)
+        slot["rows"] = rows
+        return rows
+    finally:
+        slot["event"].set()
+        with OUTINGS_INFLIGHT_LOCK:
+            if OUTINGS_INFLIGHT.get(key) is slot:
+                OUTINGS_INFLIGHT.pop(key, None)
+
+
+def fetch_outings_fresh(params):
     city_id = (params.get("city_id") or [""])[0].strip()
     try:
         lat = float(params.get("lat", [None])[0])
@@ -1199,7 +1321,11 @@ def fetch_outings(params):
     def geo_rows(km, pictured_only=False):
         found = []
         if city_id:
-            found.extend(supabase_outings("&city_id=eq." + urllib.parse.quote(city_id) + type_filter, 80, pictured_only))
+            city_rows = supabase_outings("&city_id=eq." + urllib.parse.quote(city_id) + type_filter, 80, pictured_only)
+            found.extend(city_rows)
+            enough = 24 if type_filter else 48
+            if len(city_rows) >= enough:
+                return found
         if lat is None or lon is None or km <= 0:
             return found
         dlat = km / 111.0
@@ -1240,7 +1366,7 @@ def fetch_outings(params):
         elif typ == "shopping":
             found.extend(supabase_outings("&category=eq." + urllib.parse.quote("Shopping") + extra, 80, True))
         else:
-            found.extend(supabase_outings(extra, 80, light))
+            found.extend(supabase_outings(extra + type_filter, 80, light))
         return found
 
     def unique_rows(items):
@@ -1333,22 +1459,29 @@ def fetch_outings(params):
             row["search_relax"] = reason
         return rows
 
+    started = time.monotonic()
+
+    def allow_more():
+        return (time.monotonic() - started) < 8.0
+
     pooled = pool_from(geo_rows(radius), False)
-    if not pooled and indoor != "any":
+    if not pooled and allow_more() and indoor != "any":
         saved_indoor = indoor
         indoor = "any"
         pooled = mark_relax(pool_from(geo_rows(radius), False), "indoor")
         indoor = saved_indoor
-    if not pooled and typ == "soirees" and lat is not None:
+    if not pooled and allow_more() and typ == "soirees" and lat is not None:
         saved_r = radius
         for km in (30, 60):
+            if not allow_more():
+                break
             radius = km
             extra = pool_from(geo_rows(km), False)
             if extra:
                 pooled = mark_relax(extra, "far")
                 break
         radius = saved_r
-    if not pooled and typ not in ("all", "shopping", "randonnee"):
+    if not pooled and allow_more() and typ not in ("all", "shopping", "randonnee"):
         saved_typ = typ
         typ = "all"
         pooled = mark_relax(pool_from(geo_rows(radius), False), "type")
@@ -1357,7 +1490,7 @@ def fetch_outings(params):
         if typ == "all" or pooled[0].get("search_relax") in ("type", "city"):
             return diversify_categories(pooled)
         return pooled
-    if not pooled and origin_cc and origin_cc != "FR" and typ != "shopping":
+    if not pooled and allow_more() and origin_cc and origin_cc != "FR" and typ != "shopping":
         slugs = FEATURED_INT.get(origin_cc) or ()
         if slugs:
             inslugs = ",".join(slugs)
@@ -1375,7 +1508,7 @@ def fetch_outings(params):
                 indoor = saved_indoor
                 if pooled:
                     return diversify_categories(pooled)
-    if lat is None:
+    if lat is None or not allow_more():
         return []
     nearest = []
     if typ == "randonnee" and origin_cc == "FR" and type_filter:
@@ -1385,10 +1518,12 @@ def fetch_outings(params):
             nearest = pool_from(supabase_outings(extra, 60, False), True)
     else:
         for km in (80, 180):
+            if not allow_more():
+                break
             nearest = pool_from(geo_rows(km, True), True)
             if nearest:
                 break
-        if not nearest and type_filter:
+        if not nearest and allow_more() and type_filter:
             nearest = pool_from(supabase_outings(type_filter, 60, True), True)
     nearest.sort(key=lambda row: row.get("distance_km") if row.get("distance_km") is not None else 999)
     for row in nearest:
@@ -3046,6 +3181,8 @@ class Handler(SimpleHTTPRequestHandler):
                     payload = fetch_outings(qs)
                 except urllib.error.HTTPError:
                     payload = []
+                self.send_json(payload, 200, "public, max-age=30")
+                return
             elif path == "/api/search":
                 payload = search_catalog((qs.get("q") or [""])[0], (qs.get("country") or [""])[0])
             elif path == "/api/weather":
@@ -3070,7 +3207,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 108, "mail": mail_health()}
+                payload = {"ok": True, "app": "sinki", "v": 109, "mail": mail_health()}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
