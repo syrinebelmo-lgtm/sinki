@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#243D2E" />
+    <title>Confidentialité — Sinki</title>
+    <meta name="description" content="Politique de confidentialité de Sinki : compte email, GPS à la demande, ipapi, Supabase, contact bonjour@sinki.app." />
+    <link rel="canonical" href="https://sinki.onrender.com/privacy" />
+    <link rel="icon" href="https://sinki.onrender.com/favicon.svg" type="image/svg+xml" />
+    <style>
+      :root {
+        --cream: #f4efe6;
+        --paper: #fbf7f0;
+        --ink: #1c2a22;
+        --muted: #5c6b62;
+        --forest: #243d2e;
+        --sage: #d7e4d4;
+        --line: #e3d9c8;
+      }
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: radial-gradient(1200px 600px at 50% -10%, #e7efe4 0%, var(--cream) 55%);
+        color: var(--ink);
+      }
+      .wrap { max-width: 640px; margin: 0 auto; padding: 28px 20px 56px; }
+      h1 { font-size: 1.7rem; margin: 0 0 8px; color: var(--forest); }
+      h2 { font-size: 1.1rem; margin: 28px 0 8px; color: var(--forest); }
+      p, li { color: var(--muted); line-height: 1.5; }
+      p { margin: 0 0 12px; }
+      ul { margin: 0 0 12px; padding-left: 1.2em; }
+      a { color: var(--forest); }
+      .meta { font-size: 14px; }
+      .nav { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0 24px; }
+      .card {
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 18px 18px 8px;
+      }
+      .en { margin-top: 36px; padding-top: 24px; border-top: 1px solid var(--line); }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <p class="meta"><a href="https://sinki.onrender.com/">Sinki</a> · <a href="https://sinki.onrender.com/delete">Supprimer un compte</a></p>
+      <h1>Confidentialité</h1>
+      <p>Ce que Sinki garde, pourquoi, et comment tu le supprimes. Mise à jour : 25 septembre 2026.</p>
+      <nav class="nav">
+        <a href="#fr">Français</a>
+        <a href="#en">English</a>
+      </nav>
+
+      <section id="fr" class="card">
+        <h2>Éditeur</h2>
+        <p>Sinki est une application web (PWA). L’éditeur est l’opérateur de Sinki. Le nom légal et l’adresse postale seront complétés ici dès qu’ils seront enregistrés. Aucune société, aucun SIRET ni aucune adresse n’est inventé sur cette page.</p>
+        <p>Contact : <a href="mailto:bonjour@sinki.app">bonjour@sinki.app</a>.</p>
+
+        <h2>Données de compte</h2>
+        <p>La connexion se fait par email et un code à 6 chiffres (OTP). Pas de mot de passe. Le compte peut contenir : email, prénom, nom, pseudo, photo de profil éventuelle, jeton de session.</p>
+
+        <h2>Localisation</h2>
+        <p>Le GPS du téléphone n’est demandé que pour une recherche de proximité, à ta demande. Il n’est pas enregistré sur le serveur.</p>
+        <p>Le pays d’accueil peut être estimé à partir de ton adresse IP, envoyée à ipapi.co et ip-api.com. Tu peux changer le pays à la main dans les réglages.</p>
+
+        <h2>Services utilisés</h2>
+        <ul>
+          <li>Hébergement de l’app : Render (sinki.onrender.com).</li>
+          <li>Catalogue, groupes, favoris et parfois le store de comptes : Supabase, si le serveur est configuré.</li>
+          <li>Emails (codes de connexion, parfois un mail interne de modération) : Resend lorsque la clé est configurée ; sinon un autre envoi déjà branché (Auth Supabase ou mail local). Sinki n’envoie pas de mail pour un like ou un commentaire.</li>
+        </ul>
+
+        <h2>Ce que Sinki ne fait pas</h2>
+        <p>Pas de SDK publicitaire, pas d’outil d’analytics tiers, pas de tracking publicitaire dans l’app actuelle.</p>
+
+        <h2>Durées et droits</h2>
+        <p>Le compte et tes événements restent tant que tu ne les supprimes pas (ou qu’un événement est refusé / expire). Les codes OTP sont temporaires.</p>
+        <p>Tes droits : accès, rectification (profil), opposition (ne pas activer le GPS, changer le pays), effacement.</p>
+        <p>Pour supprimer tes données : dans l’app, Compte → Supprimer mon compte ; ou la page <a href="https://sinki.onrender.com/delete">https://sinki.onrender.com/delete</a> ; ou un mail à <a href="mailto:bonjour@sinki.app?subject=Suppression%20de%20compte%20Sinki">bonjour@sinki.app</a>.</p>
+
+        <h2>Catalogue</h2>
+        <p>Les fiches (lieux, photos) viennent de sources publiques, dont OpenStreetMap / Wikimedia selon les fiches. Sinki n’invente pas d’activités, de photos ni de prix.</p>
+        <p>Cette notice décrit le produit tel qu’il existe aujourd’hui. Elle sera mise à jour si des stores, paiements ou SDK sont ajoutés.</p>
+      </section>
+
+      <section id="en" class="card en" lang="en">
+        <h2>Publisher</h2>
+        <p>Sinki is a web app (PWA). The publisher is the Sinki operator. The legal name and postal address will be completed here once they are recorded. This page does not invent a company name, SIRET, or street address.</p>
+        <p>Contact: <a href="mailto:bonjour@sinki.app">bonjour@sinki.app</a>.</p>
+
+        <h2>Account data</h2>
+        <p>Sign-in uses your email and a 6-digit one-time code. No password. An account may include: email, first name, last name, username, optional profile photo, session token.</p>
+
+        <h2>Location</h2>
+        <p>Phone GPS is requested only for a nearby search, when you ask. It is not stored on the server.</p>
+        <p>Your home country may be guessed from your IP address, which can be sent to ipapi.co and ip-api.com. You can change the country yourself in settings.</p>
+
+        <h2>Services used</h2>
+        <ul>
+          <li>App hosting: Render (sinki.onrender.com).</li>
+          <li>Catalog, groups, favorites, and sometimes the account store: Supabase, when the server is configured.</li>
+          <li>Email (login codes, sometimes an internal moderation mail): Resend when a key is configured; otherwise another already-wired sender (Supabase Auth or local mail). A like or a comment does not send email.</li>
+        </ul>
+
+        <h2>What Sinki does not do</h2>
+        <p>No ad SDK, no third-party analytics SDK, and no advertising tracker in the current app.</p>
+
+        <h2>Retention and rights</h2>
+        <p>Your account and events stay until you delete them (or an event is rejected / expires). OTP codes are short-lived.</p>
+        <p>Your rights: access, correction (profile), objection (don’t use GPS, change country), erasure.</p>
+        <p>To delete your data: in the app, Account → Delete my account; or <a href="https://sinki.onrender.com/delete">https://sinki.onrender.com/delete</a>; or email <a href="mailto:bonjour@sinki.app?subject=Sinki%20account%20deletion">bonjour@sinki.app</a>.</p>
+
+        <h2>Catalog</h2>
+        <p>Place cards and photos come from public sources, including OpenStreetMap / Wikimedia depending on the card. Sinki does not invent activities, photos, or prices.</p>
+        <p>This notice describes the product as it exists today. It will be updated if stores, payments, or SDKs are added.</p>
+      </section>
+    </main>
+  </body>
+</html>
