@@ -2019,12 +2019,6 @@ def friendly_auth_error(payload, raw="", extra=""):
         return "Ce compte existe déjà. Clique Se connecter : on t’envoie un code."
     if "user_not_found" in blob or "user not found" in blob:
         return "Pas de compte avec cet email. Clique S’inscrire."
-    if "rate" in blob or "over_request" in blob or "over_email_send" in blob:
-        return otp_rate_error(rate_wait_sec(payload, raw))
-    if "otp_disabled" in blob or "signups not allowed" in blob:
-        return SEND_FAILED
-    if "database error" in blob or "unexpected_failure" in blob:
-        return SEND_FAILED
     if "invalid" in blob and "email" in blob:
         return "Email invalide."
     return SEND_FAILED
@@ -2411,12 +2405,44 @@ def send_supabase_otp_mail(email, create_user):
     return True
 
 
-def log_auth_send_fail(reason, exists=False, mode=""):
+def log_auth_send_fail(reason, exists=False, in_auth=False, mode=""):
     print(
-        "auth_send_fail reason=%s exists=%s mode=%s resend=%s render=%s"
-        % (reason or "unknown", bool(exists), mode or "-", has_resend_key(), running_on_render()),
+        "auth_send_fail reason=%s exists=%s auth=%s mode=%s resend=%s render=%s"
+        % (
+            reason or "unknown",
+            bool(exists),
+            in_auth,
+            mode or "-",
+            has_resend_key(),
+            running_on_render(),
+        ),
         flush=True,
     )
+
+
+def log_auth_send_ok(channel, exists=False, in_auth=False, mode=""):
+    print(
+        "auth_send_ok channel=%s exists=%s auth=%s mode=%s"
+        % (channel or "-", bool(exists), in_auth, mode or "-"),
+        flush=True,
+    )
+
+
+def gotrue_user_exists(email):
+    """True / False / None (lookup failed). Never logs the email."""
+    if not supabase_mail_ready():
+        return None
+    email = normalize_email(email)
+    if not email:
+        return False
+    try:
+        data = gotrue("GET", "/admin/users?page=1&per_page=200")
+    except Exception:
+        return None
+    for user in data.get("users") or []:
+        if normalize_email((user or {}).get("email")) == email:
+            return True
+    return False
 
 
 class AuthMailError(ValueError):
@@ -2425,25 +2451,15 @@ class AuthMailError(ValueError):
         self.reason = reason or "gotrue"
 
 
-def gotrue_send_error(payload, raw=""):
-    return AuthMailError(friendly_auth_error(payload, raw), auth_error_code(payload) or "gotrue_http")
-
-
-def send_supabase_otp_fast(email, prefer_create):
+def send_existing_gotrue_otp(email):
+    """Email OTP for a user already in Auth. Never creates a user (that path is broken)."""
     try:
-        send_supabase_otp_mail(email, create_user=prefer_create)
+        send_supabase_otp_mail(email, create_user=False)
         return True
     except urllib.error.HTTPError as exc:
         payload, raw = http_error_body(exc)
-        blob = (auth_error_code(payload) + " " + str((payload or {}).get("msg") or raw)).lower()
-        if ("user_not_found" in blob or "user not found" in blob) and not prefer_create:
-            try:
-                send_supabase_otp_mail(email, create_user=True)
-                return True
-            except urllib.error.HTTPError as exc2:
-                payload, raw = http_error_body(exc2)
-                raise gotrue_send_error(payload, raw) from exc2
-        raise gotrue_send_error(payload, raw) from exc
+        reason = auth_error_code(payload) or "gotrue_http"
+        raise AuthMailError(SEND_FAILED, reason) from exc
 
 
 def send_login_code(body, host_header=""):
@@ -2454,9 +2470,10 @@ def send_login_code(body, host_header=""):
         raise ValueError(otp_rate_error(wait_sec))
     mode = str(body.get("mode") or "").strip().lower()
     exists = local_auth.email_has_account(email)
+    in_auth = gotrue_user_exists(email)
     if mode == "signup" and exists:
         raise ValueError("Ce mail a déjà un compte. Connecte-toi.")
-    if mode == "login" and not exists:
+    if mode == "login" and not exists and in_auth is not True:
         raise ValueError("Aucun compte avec ce mail. Crée-en un.")
     nick = str(body.get("nick") or "").strip()[:40]
     if nick and local_auth.pseudo_taken(nick, email):
@@ -2469,22 +2486,25 @@ def send_login_code(body, host_header=""):
         "nick": nick,
     }
 
-    # Known accounts: Auth OTP first (the path that used to deliver). No SMTP wait.
-    if exists and supabase_mail_ready():
+    # Existing Auth users: GoTrue email OTP only. No create_user, no SMTP, no Mail.app.
+    try_gotrue = supabase_mail_ready() and (in_auth is True or (in_auth is None and exists))
+    if try_gotrue:
         try:
-            send_supabase_otp_fast(email, prefer_create=False)
+            send_existing_gotrue_otp(email)
             local_auth.mark_pending_external(email, "gotrue")
             local_auth.record_otp_send(email)
+            log_auth_send_ok("gotrue", exists=exists, in_auth=in_auth, mode=mode)
             return {"ok": True, "email_note": note}
-        except ValueError as exc:
-            public = str(exc)
-            reason = str(getattr(exc, "reason", None) or "gotrue")
-            log_auth_send_fail(reason, exists=exists, mode=mode)
-            # Auth 429 / rate limit: never record a Sinki lock; just tell the user to wait 2 min.
-            if public != SEND_FAILED or "over_email" in reason.lower() or "rate" in reason.lower():
-                raise
+        except AuthMailError as exc:
+            log_auth_send_fail(exc.reason, exists=exists, in_auth=in_auth, mode=mode)
+            raise ValueError(SEND_FAILED) from exc
         except Exception as exc:
-            log_auth_send_fail(type(exc).__name__, exists=exists, mode=mode)
+            log_auth_send_fail(type(exc).__name__, exists=exists, in_auth=in_auth, mode=mode)
+            raise ValueError(SEND_FAILED) from exc
+
+    if on_render and not has_resend_key():
+        log_auth_send_fail("no_resend_new_user", exists=exists, in_auth=in_auth, mode=mode)
+        raise ValueError(SEND_FAILED)
 
     try:
         otp = local_auth.request_code(email, profile)
@@ -2496,17 +2516,16 @@ def send_login_code(body, host_header=""):
         mailed, _mail_err = send_sinki_mail(email, otp, channels=["resend"] if on_render else None)
         if mailed:
             local_auth.record_otp_send(email)
+            log_auth_send_ok("resend", exists=exists, in_auth=in_auth, mode=mode)
             return {"ok": True, "email_note": note}
-        log_auth_send_fail("mail_api", exists=exists, mode=mode)
+        log_auth_send_fail("mail_api", exists=exists, in_auth=in_auth, mode=mode)
         raise ValueError(SEND_FAILED)
-    if not on_render:
-        mailed, _mail_err = send_sinki_mail(email, otp)
-        if mailed:
-            local_auth.record_otp_send(email)
-            return {"ok": True, "email_note": note}
-        log_auth_send_fail("local_mail", exists=exists, mode=mode)
-    else:
-        log_auth_send_fail("no_channel", exists=exists, mode=mode)
+    mailed, _mail_err = send_sinki_mail(email, otp)
+    if mailed:
+        local_auth.record_otp_send(email)
+        log_auth_send_ok("local_mail", exists=exists, in_auth=in_auth, mode=mode)
+        return {"ok": True, "email_note": note}
+    log_auth_send_fail("local_mail", exists=exists, in_auth=in_auth, mode=mode)
     raise ValueError(SEND_FAILED)
 
 
@@ -3362,7 +3381,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 118, "mail": mail_health()}
+                payload = {"ok": True, "app": "sinki", "v": 119, "mail": mail_health()}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":

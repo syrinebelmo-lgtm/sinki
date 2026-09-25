@@ -1292,7 +1292,7 @@ function friendlyAuthError(err) {
   if (s.includes("email_exists") || s.includes("already been registered") || s.includes("déjà un compte")) return t("err_mail_taken");
   if (s.includes("Aucun compte") || s.includes("no account")) return t("err_no_account");
   if (s.includes("déjà pris") || s.includes("already taken") || s === "taken") return t("err_pseudo_taken");
-  if (/rate|over_email_send|Trop de codes|Too many codes|heure|hour/i.test(s)) {
+  if (/Trop de codes|Too many codes/i.test(s)) {
     return t("err_mail_rate");
   }
   if (/n’est pas configuré|n'est pas configuré|isn’t configured|is not configured|pas de Resend|no Resend|RESEND_API_KEY|Resend|thesinkiisinki|SMTP bloqué/i.test(s)) return t("err_send_code");
