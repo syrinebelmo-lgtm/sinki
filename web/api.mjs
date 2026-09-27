@@ -65,7 +65,11 @@ export async function fetchOutings(params) {
   const lon = Number(params.lon);
   const radius = Number(params.radius_km || 15);
   const budget = params.budget === "" || params.budget == null ? null : Number(params.budget);
-  const types = String(params.type || "all").split(",").map((x) => x.trim()).filter(Boolean);
+  
+  // 🔧 MULTI-SELECT : Parser les types séparés par virgule
+  const typeStr = String(params.type || "all").trim();
+  const types = typeStr === "all" ? ["all"] : typeStr.split(",").map(t => t.trim()).filter(Boolean);
+  
   const indoor = params.indoor || "any";
   if (!cityId && !Number.isFinite(lat)) return [];
 
@@ -88,7 +92,31 @@ export async function fetchOutings(params) {
       if (dist > radius) return false;
     }
     if (budget != null && Number.isFinite(budget) && Number(row.price_min ?? 0) > budget) return false;
-    if (!types.includes("all") && !types.includes(row.kind === "restaurant" ? "restaurants" : row.kind === "event" ? "evenements" : row.category === "Restaurants et cafés" ? "restaurants" : row.category === "Activités et loisirs" ? "activites" : row.category === "Lieux gratuits et balades" ? "balades" : row.category === "Soirées et concerts" ? "soirees" : row.category === "Musées et culture" ? "culture" : "")) return false;
+    
+    // 🔧 MULTI-SELECT : Vérifier si la sortie correspond à AU MOINS UN type sélectionné
+    if (!types.includes("all")) {
+      const categoryMap = {
+        "Restaurants et cafés": ["restaurants"],
+        "Activités et loisirs": ["activites"],
+        "Lieux gratuits et balades": ["balades"],
+        "Soirées et concerts": ["soirees"],
+        "Musées et culture": ["culture"],
+      };
+      const kindMap = {
+        "restaurant": ["restaurants"],
+        "event": ["evenements"],
+        "walk": ["balades"],
+      };
+      
+      const rowTypes = new Set([
+        ...((categoryMap[row.category] || []) ),
+        ...(kindMap[row.kind] || [])
+      ]);
+      
+      // Au moins un type doit correspondre
+      if (!types.some(t => rowTypes.has(t))) return false;
+    }
+    
     if (indoor === "in" && row.indoor === false) return false;
     if (indoor === "out" && row.indoor === true) return false;
     return true;
