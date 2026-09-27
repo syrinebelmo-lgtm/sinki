@@ -5,6 +5,7 @@ import json
 import os
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -205,6 +206,12 @@ def overpass_shop(query):
         try:
             with urllib.request.urlopen(req, timeout=120) as resp:
                 return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as exc:
+            last = exc
+            if exc.code == 429:
+                time.sleep(20)
+            else:
+                time.sleep(2)
         except Exception as exc:
             last = exc
             time.sleep(2)
@@ -213,13 +220,18 @@ def overpass_shop(query):
 
 def fetch_one(query):
     last_err = None
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             data = overpass_shop(query)
             remark = data.get("remark")
             if remark:
                 print("overpass remark", remark[:180], flush=True)
             return data.get("elements") or []
+        except urllib.error.HTTPError as exc:
+            last_err = exc
+            wait = 20 * (attempt + 1) if exc.code == 429 else 6 * (attempt + 1)
+            print("overpass HTTP", exc.code, "retry", attempt + 1, flush=True)
+            time.sleep(wait)
         except Exception as exc:
             last_err = exc
             time.sleep(6 * (attempt + 1))

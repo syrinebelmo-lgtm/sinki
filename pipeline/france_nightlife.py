@@ -5,6 +5,7 @@ import json
 import os
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -301,6 +302,54 @@ def extra_country_hubs(featured_cc):
     return hubs
 
 
+def catalog_country_codes():
+    codes = set(REST_OSM) | set(EURO) | {
+        "CH", "GB", "US", "JP", "CA", "TH", "MA", "NO", "SE", "DK", "PL", "RO",
+        "BG", "RS", "BA", "AL", "MK", "MD", "IS", "LI", "HU", "CZ", "ME", "XK",
+    }
+    codes.discard("FR")
+    return sorted(codes)
+
+
+def fetch_cities_cc_cap(url, service_role, cc, cap=10):
+    q = (
+        url.rstrip("/")
+        + "/rest/v1/cities?select=id,slug,name,latitude,longitude,country_code"
+        + "&country_code=eq."
+        + urllib.parse.quote(cc)
+        + "&latitude=not.is.null"
+        + "&order=id.asc&limit="
+        + str(cap)
+    )
+    req = urllib.request.Request(
+        q,
+        headers={
+            "apikey": service_role,
+            "Authorization": "Bearer " + service_role,
+        },
+    )
+    last = None
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=40) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            last = exc
+            if exc.code == 500:
+                print("catalog cities skip", cc, "HTTP 500", flush=True)
+                return []
+            if exc.code == 429:
+                time.sleep(8 * (attempt + 1))
+                continue
+            print("catalog cities skip", cc, "HTTP", exc.code, flush=True)
+            return []
+        except Exception as exc:
+            last = exc
+            time.sleep(2)
+    print("catalog cities fail", cc, last, flush=True)
+    return []
+
+
 def recategorize_culture_shows(url, service_role):
     needles = (
         "concert",
@@ -501,6 +550,10 @@ def main():
     parser.add_argument("--all-hubs", action="store_true")
     parser.add_argument("--france-area", action="store_true")
     parser.add_argument("--world", action="store_true")
+    parser.add_argument("--catalog", action="store_true")
+    parser.add_argument("--cc", action="append", default=[])
+    parser.add_argument("--cc-from")
+    parser.add_argument("--cc-to")
     parser.add_argument("--recategorize-culture", action="store_true")
     parser.add_argument("--radius-m", type=int, default=12000)
     args = parser.parse_args()
@@ -513,17 +566,22 @@ def main():
 
     if args.recategorize_culture:
         recategorize_world(url, service_role)
-        if not (args.world or args.france_area or args.all_hubs or args.hub):
+        if not (args.world or args.france_area or args.all_hubs or args.hub or args.catalog):
             return
 
-    fr_cities = fetch_all(
-        url,
-        service_role,
-        "cities",
-        "id,slug,name,latitude,longitude,country_code",
-        extra="&country_code=eq.FR",
+    need_fr = args.france_area or args.all_hubs or args.hub or args.world or not (
+        args.world or args.france_area or args.recategorize_culture or args.catalog
     )
-    fr_cities = [row for row in fr_cities if row.get("latitude") is not None]
+    fr_cities = []
+    if need_fr:
+        fr_cities = fetch_all(
+            url,
+            service_role,
+            "cities",
+            "id,slug,name,latitude,longitude,country_code",
+            extra="&country_code=eq.FR",
+        )
+        fr_cities = [row for row in fr_cities if row.get("latitude") is not None]
 
     if args.france_area:
         elements = fetch_france_clubs()
@@ -556,7 +614,9 @@ def main():
         if not hubs:
             raise SystemExit("hub inconnu: " + args.hub)
 
-    if args.hub or args.all_hubs or not (args.world or args.france_area or args.recategorize_culture):
+    if args.hub or args.all_hubs or not (
+        args.world or args.france_area or args.recategorize_culture or args.catalog
+    ):
         items = []
         for el in collect_elements(hubs, args.radius_m, clubs_only=False):
             item = osm_to_night(el, True)
@@ -585,6 +645,75 @@ def main():
         print("importables nightlife world", len(payload), "boites", clubs, "ignorés", skipped, flush=True)
         if payload:
             upsert_outings(url, service_role, payload)
+
+    if args.catalog:
+        wanted = catalog_country_codes()
+        if args.cc:
+            only = {c.strip().upper() for c in args.cc if c.strip()}
+            wanted = [c for c in wanted if c in only]
+        if args.cc_from:
+            wanted = [c for c in wanted if c >= args.cc_from.strip().upper()]
+        if args.cc_to:
+            wanted = [c for c in wanted if c <= args.cc_to.strip().upper()]
+        print("catalog pays", len(wanted), flush=True)
+        seen_osm = set()
+        total_payload = 0
+        total_clubs = 0
+        total_skipped = 0
+        total_items = 0
+        total_hubs = 0
+        for cc in wanted:
+            try:
+                rows = fetch_cities_cc_cap(url, service_role, cc, 10)
+            except Exception as exc:
+                print("catalog cities fail", cc, exc, flush=True)
+                continue
+            rows = [row for row in rows if row.get("latitude") is not None]
+            hubs_c = [
+                ((row.get("name") or cc) + " " + cc, row["latitude"], row["longitude"])
+                for row in rows
+            ]
+            total_hubs += len(hubs_c)
+            print("catalog", cc, "villes", len(rows), flush=True)
+            if not hubs_c:
+                continue
+            items = []
+            for el in collect_elements(hubs_c, args.radius_m, clubs_only=True):
+                key = (el.get("type"), el.get("id"))
+                if key in seen_osm:
+                    continue
+                seen_osm.add(key)
+                item = osm_to_night(el, False)
+                if item:
+                    items.append(item)
+            total_items += len(items)
+            payload, skipped, clubs = build_payload(items, rows, False)
+            print(
+                "importables",
+                cc,
+                len(payload),
+                "boites",
+                clubs,
+                "ignorés",
+                skipped,
+                flush=True,
+            )
+            if payload:
+                upsert_outings(url, service_role, payload)
+            total_payload += len(payload)
+            total_clubs += clubs
+            total_skipped += skipped
+        print("catalog hubs", total_hubs, flush=True)
+        print("convertis catalog", total_items, flush=True)
+        print(
+            "importables nightlife catalog",
+            total_payload,
+            "boites",
+            total_clubs,
+            "ignorés",
+            total_skipped,
+            flush=True,
+        )
 
     print("terminé nightlife", flush=True)
 

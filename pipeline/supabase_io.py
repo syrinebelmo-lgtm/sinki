@@ -42,7 +42,13 @@ def fetch_all(url, service_role, path, select, extra=""):
                     batch = json.loads(resp.read().decode("utf-8"))
                 last = None
                 break
-            except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
+            except urllib.error.HTTPError as exc:
+                last = exc
+                if exc.code == 500:
+                    print("fetch_all skip HTTP 500", path, flush=True)
+                    return rows
+                time.sleep(2.5 * (attempt + 1))
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 last = exc
                 time.sleep(2.5 * (attempt + 1))
         if last is not None:
