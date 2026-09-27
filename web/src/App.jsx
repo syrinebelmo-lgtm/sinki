@@ -239,6 +239,12 @@ export default function App() {
     }
   }
 
+  function pickRandomOuting() {
+    if (pool.length === 0) return;
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    setResults([pick]);
+  }
+
   function Card({ item }) {
     return (
       <article className="card">
@@ -288,7 +294,7 @@ export default function App() {
       {screen === "home" && (
         <div className="home">
           <img className="biche" src="/biche-sinki.png" alt="Mascotte biche de Sinki" />
-          <h1>On fait quoi aujourd’hui ?</h1>
+          <h1>On fait quoi aujourd'hui ?</h1>
           <p className="lead">Trois sorties faites pour votre groupe, votre budget et votre humeur.</p>
           <button className="btn" onClick={() => { setScreen("search"); setStep(1); }}>
             Commencer
@@ -318,7 +324,7 @@ export default function App() {
       {screen === "search" && step === 1 && (
         <div className="page">
           <div className="step">1 sur 2</div>
-          <h1>D’où partez-vous ?</h1>
+          <h1>D'où partez-vous ?</h1>
           <p className="lead">Indiquez votre point de départ pour trouver des sorties proches de vous.</p>
           <label>Point de départ</label>
           <input
@@ -354,7 +360,7 @@ export default function App() {
           >
             ⌖ Utiliser ma position
           </button>
-          <p className="hint">Votre position sert uniquement à cette recherche et n’est pas enregistrée.</p>
+          <p className="hint">Votre position sert uniquement à cette recherche et n'est pas enregistrée.</p>
           <label>Nombre de participants</label>
           <div className="people">
             <button className="icon-btn" onClick={() => setPeople((n) => Math.max(1, n - 1))}>−</button>
@@ -370,12 +376,12 @@ export default function App() {
       {screen === "search" && step === 2 && (
         <div className="page">
           <div className="step">2 sur 2</div>
-          <h1>Qu’est-ce qui vous ferait plaisir ?</h1>
-          <p className="lead">Quelques choix et Sinki s’occupe du reste.</p>
+          <h1>Qu'est-ce qui vous ferait plaisir ?</h1>
+          <p className="lead">Quelques choix et Sinki s'occupe du reste.</p>
           <label>Date de la sortie</label>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
           <div className="row" style={{ marginTop: 8 }}>
-            <button className={"chip" + (date === todayISO() ? " on" : "")} onClick={() => setDate(todayISO())}>Aujourd’hui</button>
+            <button className={"chip" + (date === todayISO() ? " on" : "")} onClick={() => setDate(todayISO())}>Aujourd'hui</button>
             <button className={"chip" + (date === addDays(1) ? " on" : "")} onClick={() => setDate(addDays(1))}>Demain</button>
             <button className={"chip" + (date === addDays(7) ? " on" : "")} onClick={() => setDate(addDays(7))}>Dans 1 semaine</button>
           </div>
@@ -443,11 +449,7 @@ export default function App() {
           {results.map((item) => <Card key={item.id} item={item} />)}
           <button
             className="btn"
-            onClick={() => {
-              if (!pool.length) return;
-              const pick = pool[Math.floor(Math.random() * pool.length)];
-              setResults([pick]);
-            }}
+            onClick={pickRandomOuting}
           >
             🎲 Sinki choisit pour nous
             <small>Une sortie au hasard qui respecte vos critères</small>
@@ -488,7 +490,7 @@ export default function App() {
       {screen === "plans" && (
         <div className="page">
           <h1>Mes sorties prévues</h1>
-          {plans.length === 0 && <p className="empty">Rien de prévu pour l’instant.</p>}
+          {plans.length === 0 && <p className="empty">Rien de prévu pour l'instant.</p>}
           {plans.map((item) => (
             <div key={item.id}>
               <p className="hint">📅 {item.planned_for ? formatDate(item.planned_for) : ""}</p>
