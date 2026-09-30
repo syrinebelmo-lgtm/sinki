@@ -496,6 +496,12 @@ def qc_outing(row):
     url = (row.get("photo_url") or "").strip()
     if url and not has_usable_photo(url):
         row["photo_url"] = None
+    elif url and any(domain in (urllib.parse.urlparse(url).hostname or "") for domain in ("wikimedia.org", "wikipedia.org")):
+        filename = urllib.parse.unquote(urllib.parse.urlparse(url).path.rsplit("/", 1)[-1]).replace("_", " ").lower()
+        place_name = (row.get("name") or "").lower()
+        unrelated_infrastructure = re.search(r"\b(bus stop|bus station|arr[eê]t de bus|parking|car park)\b", filename)
+        if unrelated_infrastructure and not re.search(r"\b(bus stop|bus station|arr[eê]t de bus|parking|car park)\b", place_name):
+            row["photo_url"] = None
     cat = row.get("category") or ""
     name = row.get("name") or ""
     a, b = _money_pair(row)
@@ -1308,7 +1314,15 @@ def fetch_outings_fresh(params):
         type_cat = "Randonnées"
     elif typ == "soirees":
         type_cat = "Soirées et concerts"
+    elif typ == "activites":
+        type_cat = "Activités et loisirs"
     type_filter = ("&category=eq." + urllib.parse.quote(type_cat)) if type_cat else ""
+    if typ == "restaurants":
+        type_filter = "&or=(category.eq." + urllib.parse.quote("Restaurants et cafés") + ",kind.eq.restaurant)"
+    elif typ == "balades":
+        type_filter = "&category=in.(" + ",".join(urllib.parse.quote(c) for c in ("Lieux gratuits et balades", "Randonnées")) + ")"
+    elif typ == "evenements":
+        type_filter = "&kind=eq.event"
     if typ == "culture":
         type_filter = (
             "&or=(category.eq."
@@ -2451,10 +2465,10 @@ class AuthMailError(ValueError):
         self.reason = reason or "gotrue"
 
 
-def send_existing_gotrue_otp(email):
-    """Email OTP for a user already in Auth. Never creates a user (that path is broken)."""
+def send_gotrue_otp(email, create_user=False):
+    """Ask GoTrue to deliver the code; it owns both existing and new users."""
     try:
-        send_supabase_otp_mail(email, create_user=False)
+        send_supabase_otp_mail(email, create_user=create_user)
         return True
     except urllib.error.HTTPError as exc:
         payload, raw = http_error_body(exc)
@@ -2471,7 +2485,7 @@ def send_login_code(body, host_header=""):
     mode = str(body.get("mode") or "").strip().lower()
     exists = local_auth.email_has_account(email)
     in_auth = gotrue_user_exists(email)
-    if mode == "signup" and exists:
+    if mode == "signup" and (exists or in_auth is True):
         raise ValueError("Ce mail a déjà un compte. Connecte-toi.")
     if mode == "login" and not exists and in_auth is not True:
         raise ValueError("Aucun compte avec ce mail. Crée-en un.")
@@ -2486,21 +2500,24 @@ def send_login_code(body, host_header=""):
         "nick": nick,
     }
 
-    # Existing Auth users: GoTrue email OTP only. No create_user, no SMTP, no Mail.app.
-    try_gotrue = supabase_mail_ready() and (in_auth is True or (in_auth is None and exists))
+    # Render has no local SMTP or Mail.app. GoTrue must deliver codes for both
+    # signup and login, including older local accounts not yet in Auth.
+    try_gotrue = supabase_mail_ready()
     if try_gotrue:
         try:
-            send_existing_gotrue_otp(email)
+            send_gotrue_otp(email, create_user=(in_auth is not True))
             local_auth.mark_pending_external(email, "gotrue")
             local_auth.record_otp_send(email)
             log_auth_send_ok("gotrue", exists=exists, in_auth=in_auth, mode=mode)
             return {"ok": True, "email_note": note}
         except AuthMailError as exc:
             log_auth_send_fail(exc.reason, exists=exists, in_auth=in_auth, mode=mode)
-            raise ValueError(SEND_FAILED) from exc
+            if not has_resend_key():
+                raise ValueError(SEND_FAILED) from exc
         except Exception as exc:
             log_auth_send_fail(type(exc).__name__, exists=exists, in_auth=in_auth, mode=mode)
-            raise ValueError(SEND_FAILED) from exc
+            if not has_resend_key():
+                raise ValueError(SEND_FAILED) from exc
 
     if on_render and not has_resend_key():
         log_auth_send_fail("no_resend_new_user", exists=exists, in_auth=in_auth, mode=mode)
@@ -3356,6 +3373,14 @@ class Handler(SimpleHTTPRequestHandler):
                 except urllib.error.HTTPError:
                     payload = []
                 self.send_json(payload, 200, "public, max-age=30")
+                return
+            elif path == "/api/outings/id":
+                outing_id = (qs.get("id") or [""])[0]
+                if not UUID_RE.fullmatch(outing_id):
+                    self.send_json({"error": "Sortie introuvable"}, 404)
+                    return
+                rows = fetch_outings_by_ids([outing_id])
+                self.send_json(rows[0] if rows else {"error": "Sortie introuvable"}, 200 if rows else 404)
                 return
             elif path == "/api/search":
                 payload = search_catalog((qs.get("q") or [""])[0], (qs.get("country") or [""])[0])

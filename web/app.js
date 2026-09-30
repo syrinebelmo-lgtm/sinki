@@ -737,6 +737,26 @@ function chips(list, current, onPick) {
     `<button class="chip${current === id ? " on" : ""}" data-pick="${onPick}" data-id="${id}">${label}</button>`
   ).join("")}</div>`;
 }
+function selectedTypes(value = state.type) {
+  const valid = new Set(typeList().map(([id]) => id));
+  const selected = String(value || "all").split(",").filter((id) => id !== "all" && valid.has(id));
+  return selected.length ? [...new Set(selected)] : ["all"];
+}
+function onlyType(id) {
+  const selected = selectedTypes();
+  return selected.length === 1 && selected[0] === id;
+}
+function typeChips() {
+  const selected = selectedTypes();
+  return `<div class="row">${typeList().map(([id, label]) =>
+    `<button class="chip${selected.includes(id) ? " on" : ""}" data-pick="type" data-id="${id}" aria-pressed="${selected.includes(id)}">${label}</button>`
+  ).join("")}</div>`;
+}
+function toggleType(id) {
+  if (id === "all") { state.type = "all"; return; }
+  const selected = selectedTypes().filter((item) => item !== "all");
+  state.type = (selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id]).join(",") || "all";
+}
 function isFav(id) {
   return state.favs.some((x) => x.id === id);
 }
@@ -1218,7 +1238,7 @@ function applyGroupState(g) {
   if (state.groupCode) localStorage.setItem("sinki-group-code", state.groupCode);
 }
 function isListType() {
-  return state.type === "shopping" || state.type === "randonnee";
+  return onlyType("shopping") || onlyType("randonnee");
 }
 function shareOptions() {
   const list = isListType()
@@ -1791,7 +1811,7 @@ function showPicked(rows) {
   return recordFound(rows);
 }
 function searchVibe() {
-  return state.type === "soirees" ? "party" : state.vibe;
+  return onlyType("soirees") ? "party" : state.vibe;
 }
 function proposeFromRemaining(count) {
   if (askQuota()) return false;
@@ -2002,7 +2022,7 @@ function render() {
       <label>${t("time_avail")}</label>${chips(durationList(), state.duration, "duration")}
       <label>${t("moment")}</label>${chips(momentList(), state.moment, "moment")}
       <label>${t("dist_max")}</label>${chips(RADII.map((k) => [String(k), k + " km"]), String(state.radius), "radius")}
-      <label>${t("outing_type")}</label>${chips(typeList(), state.type, "type")}
+      <label>${t("outing_type")}</label>${typeChips()}
       <label>${t("vibe")}</label>${chips(vibeList(), vibeId(state.vibe), "vibe")}
       <label>${t("place")}</label>${chips(indoorList(), state.indoor, "indoor")}
       <label>${t("transport")}</label>${chips(transportList(), state.transport, "transport")}
@@ -2054,7 +2074,7 @@ function render() {
   } else if (state.screen === "favs") {
     body = `<div class="page has-nav"><h1>${t("favs_title")}</h1>${state.favs.length ? mascot("emerveillee", t("favs_full")) + state.favs.map((item) => cardHtml(item, "fav")).join("") : mascot("emerveillee", t("favs_empty"))}${navHtml("favs")}</div>`;
   } else if (state.screen === "group") {
-    const chat = state.groupChat.map((m) => `<div class="bubble"><div class="who">${escapeHtml(m.name)}</div>${escapeHtml(m.text || "")}${m.outing ? `<div class="share-card">${escapeHtml(m.outing.name)} · ${priceLabel(m.outing)}</div>` : ""}</div>`).join("");
+    const chat = state.groupChat.map((m) => `<div class="bubble"><div class="who">${escapeHtml(m.name)}</div>${escapeHtml(m.text || "")}${m.outing ? `<button class="share-card" data-detail="${escapeHtml(String(m.outing.id || ""))}">${escapeHtml(m.outing.name)} · ${priceLabel(m.outing)} · ${t("see_all")}</button>` : ""}</div>`).join("");
     const autoNick = String((state.account && state.account.first_name) || "").trim();
     const nickField = autoNick
       ? `<p class="hint">${t("nick_auto", { name: autoNick })}</p>`
@@ -2655,6 +2675,7 @@ function bind() {
     if (el.dataset.pick) {
       const key = el.dataset.pick;
       let val = el.dataset.id;
+      if (key === "type") { toggleType(val); render(); return; }
       if (key === "radius") val = Number(val);
       state[key] = val;
       render(); return;
@@ -2673,8 +2694,14 @@ function bind() {
       render(); return;
     }
     if (el.dataset.detail) {
-      const item = findOuting(el.dataset.detail);
-      if (!item) return;
+      let item = findOuting(el.dataset.detail);
+      if (!item) {
+        try {
+          const response = await fetch("/api/outings/id?id=" + encodeURIComponent(el.dataset.detail));
+          if (response.ok) item = normalizeOuting(await response.json());
+        } catch (_) { /* Show the loading error below. */ }
+      }
+      if (!item) { alert(t("err_load")); return; }
       state.detail = { ...item, storyBusy: !item.story && !isEventItem(item) };
       render();
       if (!item.story && !isEventItem(item)) loadPlaceStory(item);
@@ -3267,6 +3294,7 @@ function isNightlifeItem(item) {
   return cat === "Soirées et concerts" && keep.test(blob) && !drop.test(blob);
 }
 function matchesType(item, type) {
+  if (String(type || "").includes(",")) return selectedTypes(type).some((id) => matchesType(item, id));
   if (!type || type === "all") return true;
   const cat = item.category || "";
   const kind = item.kind || "";
@@ -3289,7 +3317,7 @@ function respectsMandatoryFilters(item) {
   if (state.type && state.type !== "all" && !matchesType(item, state.type)) return false;
   if (state.indoor === "in" && item.indoor === false) return false;
   if (state.indoor === "out" && item.indoor === true) return false;
-  if (!state.unlimited && state.type !== "shopping" && state.type !== "randonnee") {
+  if (!state.unlimited && !onlyType("shopping") && !onlyType("randonnee")) {
     if (item.price_unknown) return Number(state.budget) > 0;
     const price = outingPriceEur(item);
     if (price == null) return Number(state.budget) > 0;
@@ -3301,6 +3329,11 @@ function respectsMandatoryFilters(item) {
 const outingsInflight = new Map();
 
 async function fetchOutingRows(opts) {
+  const types = selectedTypes(opts.type ?? state.type);
+  if (types.length > 1) {
+    const batches = await Promise.all(types.map((type) => fetchOutingRows({ ...opts, type })));
+    return [...new Map(batches.flat().map((item) => [String(item.id), item])).values()];
+  }
   const qs = new URLSearchParams({
     lat: String(state.city.latitude),
     lon: String(state.city.longitude),
