@@ -135,6 +135,16 @@ def _name_matches(name, title, all_tokens=False):
     return all(t in blob for t in toks[:2])
 
 
+def _strong_name_matches(name, title):
+    """Require two identifying words when the place name contains several."""
+    tokens = sorted(set(_tokens(name)), key=len, reverse=True)
+    if not tokens:
+        return False
+    words = set(_tokens(title))
+    required = 2 if len(tokens) > 1 else 1
+    return len(words.intersection(tokens)) >= required
+
+
 def _haversine_km(lat1, lon1, lat2, lon2):
     r = 6371.0
     p1, p2 = math.radians(lat1), math.radians(lat2)
@@ -262,11 +272,10 @@ def category_photo(category, name, cache, all_tokens=False):
         hit = _info_from_pages({page.get("pageid", 0): page})
         if not hit:
             continue
-        if all_tokens and not _name_matches(name, hit["title"], all_tokens=True):
+        if not _strong_name_matches(name, hit["title"]):
             continue
-        ranked.append((0 if _name_matches(name, hit["title"], all_tokens=all_tokens) else 1, hit))
-    ranked.sort(key=lambda x: x[0])
-    found = ranked[0][1] if ranked else None
+        ranked.append(hit)
+    found = ranked[0] if ranked else None
     cats[ckey] = found
     return found
 
@@ -481,7 +490,7 @@ def commons_search_photo(name, cache, mode="place"):
         ranked = []
         for page in pages.values():
             hit = _info_from_pages({page.get("pageid", 0): page})
-            if not hit or not _name_matches(name, hit["title"], all_tokens=(mode == "shop")):
+            if not hit or not _strong_name_matches(name, hit["title"]):
                 continue
             ranked.append(hit)
         if ranked:
@@ -494,7 +503,9 @@ def commons_search_photo(name, cache, mode="place"):
 def commons_geo_photo(lat, lon, name, cache, allow_backup=True):
     if lat is None or lon is None:
         return None
-    key = "%.3f,%.3f:%s" % (lat, lon, "b" if allow_backup else "n")
+    # Nearby coordinates do not prove the image depicts the requested place.
+    # Include the name: different POIs can share the same rounded coordinates.
+    key = "%.3f,%.3f:%s" % (lat, lon, (name or "").strip().casefold())
     geos = _bucket(cache, "geo")
     if key in geos:
         return geos[key]
@@ -513,7 +524,6 @@ def commons_geo_photo(lat, lon, name, cache, allow_backup=True):
     )
     hits = ((data or {}).get("query") or {}).get("geosearch") or []
     found = None
-    backup = None
     for hit in hits:
         title = hit.get("title") or ""
         if not _title_ok(title):
@@ -521,15 +531,11 @@ def commons_geo_photo(lat, lon, name, cache, allow_backup=True):
         licensed = file_if_free(title, cache)
         if not licensed:
             continue
-        if _name_matches(name, title):
+        if _strong_name_matches(name, title):
             found = licensed
             break
-        if backup is None:
-            backup = licensed
-    # Sans nom dans le fichier : seulement très proche (le geosearch est déjà 900 m).
-    result = found or (backup if allow_backup else None)
-    geos[key] = result
-    return result
+    geos[key] = found
+    return found
 
 
 def _file_and_category_from_tags(tags):
