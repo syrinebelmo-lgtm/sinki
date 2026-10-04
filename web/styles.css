@@ -332,6 +332,7 @@ input[type="range"] { width: 100%; accent-color: var(--forest); }
 .bubble { background: var(--sage); border-radius: 14px; padding: 8px 10px; margin: 8px 0; }
 .bubble .who { font-size: 12px; font-weight: 600; color: var(--forest); }
 .share-card { background: #fff; border-radius: 12px; padding: 8px; margin-top: 6px; border: 1px solid var(--line); font-weight: 600; }
+.share-card[data-detail] { display: block; width: 100%; color: inherit; text-align: left; cursor: pointer; }
 .composer { display: flex; gap: 8px; margin-top: 10px; }
 .composer input { flex: 1; }
 .composer .btn { width: auto; margin: 0; padding: 12px 14px; }
@@ -543,4 +544,3 @@ html[dir="rtl"] .set-row { text-align: right; }
 .nav button { min-height: 44px; padding: 10px 2px; font-size: 11px; }
 .page.has-nav { padding-bottom: 110px; }
 .sheet { position: absolute; inset: 0; }
-
