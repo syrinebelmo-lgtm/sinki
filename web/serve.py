@@ -2488,12 +2488,11 @@ def dev_mail_console():
 
 
 def events_enabled():
-    """Organizer events live in data/events.json. Render's disk is wiped on every
-    restart, so submissions vanished. Off on Render until a durable store exists
-    (SINKI_EVENTS_ENABLED=1 to force)."""
+    """Render's disk is wiped on every restart: organizer events are only open
+    there when they are stored in Supabase (events.durable())."""
     if (os.environ.get("SINKI_EVENTS_ENABLED") or "").strip() == "1":
         return True
-    return not running_on_render()
+    return event_store.durable() or not running_on_render()
 
 
 EVENTS_OFF = "La publication d’événements n’est pas encore ouverte. Écris-nous à %s pour annoncer le tien." % SUPPORT_TO
