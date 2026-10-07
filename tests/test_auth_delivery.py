@@ -63,6 +63,7 @@ class AuthDeliveryTests(unittest.TestCase):
              patch.object(serve.local_auth, "email_has_account", return_value=True), \
              patch.object(serve, "gotrue_user_exists", return_value=True), \
              patch.object(serve, "send_supabase_otp_mail", side_effect=err), \
+             patch.object(serve.local_auth, "mark_pending_external"), \
              patch.object(serve.local_auth, "record_otp_send") as record:
             with self.assertRaises(ValueError) as ctx:
                 serve.send_login_code({"email": "old@example.com", "mode": "login"})

@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import secrets
 import smtplib
 import subprocess
 import sys
@@ -1822,11 +1823,35 @@ def get_group(code):
     code = (code or "").strip().upper()
     if len(code) < 4 or code == local_auth.AUTH_SHARE:
         return None
-    rows = supabase_select("groups?share_code=eq." + urllib.parse.quote(code) + "&select=id,share_code,origin_label,filters,status")
+    rows = supabase_select("groups?share_code=eq." + urllib.parse.quote(code) + "&select=id,share_code,origin_label,filters,status,updated_at")
     row = rows[0] if rows else None
     if row and (row.get("origin_label") or "") == local_auth.AUTH_LABEL:
         return None
     return row
+
+
+def update_group(code, change):
+    """Read-modify-write of a group's filters, retried if someone wrote first.
+
+    Two friends posting at the same moment used to overwrite each other's message.
+    """
+    for _attempt in range(6):
+        group = get_group(code)
+        if not group:
+            raise ValueError("Groupe introuvable")
+        filters = change(group_filters(group))
+        stamp = group.get("updated_at")
+        guard = ("&updated_at=eq." + urllib.parse.quote(stamp)) if stamp else "&updated_at=is.null"
+        rows = supabase_request(
+            "PATCH",
+            "groups?id=eq." + urllib.parse.quote(str(group["id"])) + guard,
+            {"filters": filters, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + ".%06d+00:00" % (time.time() % 1 * 1e6)},
+        )
+        if rows:
+            row = rows[0]
+            return {k: row.get(k) for k in ("id", "share_code", "origin_label", "filters", "status", "updated_at")}
+        time.sleep(0.05)
+    raise ValueError("Le groupe est très actif, réessaie.")
 
 
 def compact_outing(outing):
@@ -1852,36 +1877,29 @@ def group_filters(group):
     return filters if isinstance(filters, dict) else {}
 
 
-def save_group_filters(group, filters):
-    supabase_request("PATCH", "groups?id=eq." + urllib.parse.quote(str(group["id"])), {"filters": filters})
-    group["filters"] = filters
-    return group
-
 
 def post_group_message(code, display_name, text, outing=None):
-    group = get_group(code)
-    if not group:
-        raise ValueError("Groupe introuvable")
-    filters = group_filters(group)
-    chat = list(filters.get("chat") or [])
-    msg = {
-        "id": str(len(chat) + 1) + "-" + str(int(__import__("time").time())),
-        "name": (display_name or "Pote")[:40],
-        "text": (text or "")[:2000],
-        "ts": __import__("time").strftime("%Y-%m-%dT%H:%M:%SZ", __import__("time").gmtime()),
-    }
+    text = (text or "").strip()[:2000]
     compact = compact_outing(outing) if outing else None
+    if not text and not compact:
+        raise ValueError("Message vide")
+    msg = {
+        "id": secrets.token_hex(6),
+        "name": (display_name or "Pote")[:40],
+        "text": text,
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
     if compact:
         msg["outing"] = compact
-    chat.append(msg)
-    filters["chat"] = chat[-80:]
-    return save_group_filters(group, filters)
+
+    def change(filters):
+        filters["chat"] = (list(filters.get("chat") or []) + [msg])[-80:]
+        return filters
+
+    return update_group(code, change)
 
 
 def set_group_poll(code, display_name, outings):
-    group = get_group(code)
-    if not group:
-        raise ValueError("Groupe introuvable")
     options = []
     seen = set()
     for row in outings or []:
@@ -1894,42 +1912,38 @@ def set_group_poll(code, display_name, outings):
             break
     if len(options) < 2:
         raise ValueError("Il faut au moins 2 sorties pour voter")
-    filters = group_filters(group)
-    filters["poll"] = {
-        "options": options,
-        "ts": __import__("time").strftime("%Y-%m-%dT%H:%M:%SZ", __import__("time").gmtime()),
-    }
-    filters["votes"] = {}
-    chat = list(filters.get("chat") or [])
-    chat.append({
-        "id": str(len(chat) + 1) + "-poll",
-        "name": (display_name or "Pote")[:40],
-        "text": "Votez pour une sortie : " + " · ".join(o["name"] for o in options),
-        "ts": filters["poll"]["ts"],
-    })
-    filters["chat"] = chat[-80:]
-    return save_group_filters(group, filters)
+    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    def change(filters):
+        filters["poll"] = {"options": options, "ts": ts}
+        filters["votes"] = {}
+        chat = list(filters.get("chat") or [])
+        chat.append({
+            "id": secrets.token_hex(6),
+            "name": (display_name or "Pote")[:40],
+            "text": "Votez pour une sortie : " + " · ".join(o["name"] for o in options),
+            "ts": ts,
+        })
+        filters["chat"] = chat[-80:]
+        return filters
+
+    return update_group(code, change)
 
 
 def vote_group(code, display_name, voter_id, outing_id):
-    group = get_group(code)
-    if not group:
-        raise ValueError("Groupe introuvable")
-    filters = group_filters(group)
-    poll = filters.get("poll") or {}
-    options = poll.get("options") or []
-    allowed = {str(o.get("id")) for o in options if o.get("id")}
     outing_id = str(outing_id or "")
-    if outing_id not in allowed:
-        raise ValueError("Cette sortie n’est pas dans le vote")
     voter_id = (voter_id or "").strip()[:64] or (display_name or "pote").strip()[:40]
-    votes = dict(filters.get("votes") or {})
-    votes[voter_id] = {
-        "name": (display_name or "Pote")[:40],
-        "outing_id": outing_id,
-    }
-    filters["votes"] = votes
-    return save_group_filters(group, filters)
+
+    def change(filters):
+        allowed = {str(o.get("id")) for o in ((filters.get("poll") or {}).get("options") or []) if o.get("id")}
+        if outing_id not in allowed:
+            raise ValueError("Cette sortie n’est pas dans le vote")
+        votes = dict(filters.get("votes") or {})
+        votes[voter_id] = {"name": (display_name or "Pote")[:40], "outing_id": outing_id}
+        filters["votes"] = votes
+        return filters
+
+    return update_group(code, change)
 
 
 def gotrue(method, path, body=None, bearer=None, timeout=12):
@@ -2048,6 +2062,8 @@ def has_smtp():
 
 
 def supabase_mail_ready():
+    if (os.environ.get("SINKI_AUTH_STORE") or "").strip().lower() == "file":
+        return False  # local test mode: never touch real Supabase Auth users
     return bool((os.environ.get("SUPABASE_URL") or "").strip() and (os.environ.get("SUPABASE_SERVICE_ROLE") or "").strip())
 
 
