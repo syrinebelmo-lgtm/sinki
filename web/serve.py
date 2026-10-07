@@ -1250,7 +1250,7 @@ def nearest_city_row(lat, lon):
 
 SELECT = (
     "id,city_id,kind,category,name,description,address,latitude,longitude,"
-    "price_min,price_max,currency,duration_minutes,indoor,photo_url,photo_license,"
+    "price_min,price_max,currency,duration_minutes,indoor,photo_url,photo_license,photo_credit,"
     "source_url,website_url,source_name,source_id"
 )
 
@@ -3504,6 +3504,8 @@ STATIC_FILES = {
     "/favicon.svg", "/biche-sinki.png", "/flyer-qr.png", "/flyer-qr.svg",
 }
 STATIC_DIRS = ("/biche/", "/icons/", "/public/")
+# Origins of the bundled iOS / Android app (Capacitor WebView).
+NATIVE_ORIGINS = {"capacitor://localhost", "https://localhost", "http://localhost", "ionic://localhost"}
 STATIC_EXT = (".png", ".jpg", ".jpeg", ".svg", ".webp", ".webmanifest")
 
 
@@ -3569,6 +3571,18 @@ class Handler(SimpleHTTPRequestHandler):
             return
         return super().do_GET()
 
+    def do_OPTIONS(self):
+        """CORS preflight for the Capacitor apps (Authorization header)."""
+        if not self.path.startswith("/api/") or (self.headers.get("Origin") or "").strip() not in NATIVE_ORIGINS:
+            self.send_error(404)
+            return
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_HEAD(self):
         path = urllib.parse.urlparse(self.path).path
         if path != "/" and not static_allowed(path):
@@ -3612,6 +3626,10 @@ class Handler(SimpleHTTPRequestHandler):
         return proto + "://" + host
 
     def end_headers(self):
+        origin = (self.headers.get("Origin") or "").strip()
+        if self.path.startswith("/api/") and origin in NATIVE_ORIGINS:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         if not self.path.startswith("/api/"):
             self.send_header("Permissions-Policy", "geolocation=(self)")
             if (
@@ -3684,7 +3702,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 120, "mail": mail_health(), "events": events_enabled()}
+                payload = {"ok": True, "app": "sinki", "v": 121, "mail": mail_health(), "events": events_enabled()}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":

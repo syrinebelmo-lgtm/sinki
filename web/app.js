@@ -1,4 +1,19 @@
 const $ = (sel, root = document) => root.querySelector(sel);
+
+// In the iOS/Android app (Capacitor) the pages are bundled on the phone and
+// SINKI_API_BASE points to the live server; on the website it stays "".
+const API_BASE = String(window.SINKI_API_BASE || "").replace(/\/$/, "");
+if (API_BASE) {
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (url, opts) => nativeFetch(typeof url === "string" && url.startsWith("/api/") ? API_BASE + url : url, opts);
+}
+function assetUrl(url) {
+  const u = String(url || "");
+  return API_BASE && /^\/(avatars|event-photos)\//.test(u) ? API_BASE + u : u;
+}
+function publicOrigin() {
+  return API_BASE || location.origin;
+}
 const app = $("#app");
 
 const RADII = [5, 15, 30];
@@ -793,7 +808,7 @@ function safeHttpUrl(raw) {
 }
 function cardHtml(item, mode) {
   const cover = item.photo_url
-    ? `<div class="cover" style="background-image:url('${String(item.photo_url).replace(/'/g, "%27")}')">`
+    ? `<div class="cover" style="background-image:url('${assetUrl(item.photo_url).replace(/'/g, "%27")}')">`
     : `<div class="cover empty">🦌`;
   const why = mode === "guided"
         ? `<div class="why">${t("why")} ${item.category === "Shopping" || state.type === "shopping" ? t("why_shop") : state.type === "randonnee" ? t("why_hike") : state.unlimited ? t("why_unlim") : t("why_budget", { n: state.budget })} · ${t("why_people", { n: state.people, who: state.people > 1 ? t("persons") : t("person") })}${item.distance_km != null ? " · " + item.distance_km + " km" : ""}${item.photo_url ? "" : " · " + t("why_nophoto")}</div>`
@@ -1149,14 +1164,25 @@ function mapsPlaceUrl(d) {
   if (d.latitude == null || d.longitude == null) return "";
   return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(d.latitude + "," + d.longitude);
 }
+// Commons licences (CC-BY, CC-BY-SA) require author + licence next to the photo.
+function photoCreditHtml(d) {
+  const url = String(d.photo_url || "");
+  if (!/wikimedia\.org|wikipedia\.org/i.test(url)) return "";
+  const file = url.split("?")[0].split("/").pop();
+  const page = "https://commons.wikimedia.org/wiki/File:" + file;
+  const who = d.photo_credit ? escapeHtml(String(d.photo_credit).replace(/<[^>]*>/g, "").slice(0, 80)) : "Wikimedia Commons";
+  const lic = d.photo_license ? " · " + escapeHtml(String(d.photo_license).slice(0, 40)) : "";
+  return `<p class="hint photo-credit">${t("photo_by")} <a href="${escapeHtml(page)}" target="_blank" rel="noreferrer">${who}</a>${lic}</p>`;
+}
 function detailSheetHtml(d) {
   const cover = d.photo_url
-    ? `<div class="sheet-cover" style="background-image:url('${String(d.photo_url).replace(/'/g, "%27")}')"></div>`
+    ? `<div class="sheet-cover" style="background-image:url('${assetUrl(d.photo_url).replace(/'/g, "%27")}')"></div>`
     : `<div class="sheet-cover empty">🦌</div>`;
-  const site = d.website_url || d.source_url;
+  const site = safeHttpUrl(d.website_url || d.source_url);
   const mapUrl = mapsPlaceUrl(d);
   return `<div class="sheet"><div class="sheet-bg" data-act="close-sheet"></div><div class="sheet-card">
       ${cover}
+      ${photoCreditHtml(d)}
       <div class="cat">${escapeHtml(d.category || t("outing"))}</div>
       <h1 style="font-size:30px">${escapeHtml(d.name || t("outing"))}</h1>
       <p class="meta">${priceLabel(d)}</p>
@@ -1170,12 +1196,13 @@ function detailSheetHtml(d) {
         ${factRow(t("fact_in"), indoorLabel(d.indoor))}
         ${factRow(t("fact_addr"), d.address)}
         ${factRow(t("fact_dist"), d.distance_km != null ? d.distance_km + " km" : "")}
+        ${factRow(t("fact_source"), sourceLabel(d.source_name))}
         ${bringNote(d) ? factRow(t("fact_bring"), bringNote(d)) : ""}
       </dl>
       ${isEventItem(d) ? eventCommentsHtml(d) : ""}
       ${routePanel()}
       ${mapUrl ? `<a class="btn outline" href="${mapUrl}" target="_blank" rel="noreferrer">${t("see_map")}</a>` : ""}
-      ${site ? `<a class="btn outline" href="${site}" target="_blank" rel="noreferrer">${t("site")}</a>` : ""}
+      ${site ? `<a class="btn outline" href="${escapeHtml(site)}" target="_blank" rel="noreferrer">${t("site")}</a>` : ""}
       <button class="btn sand" data-act="plan">📅 ${t("add_plan")}</button>
       <button class="btn secondary" data-act="send-detail-group">${t("send_detail")}</button>
       <button class="ghost" data-act="close-sheet">${t("close")}</button>
@@ -1285,7 +1312,7 @@ function voteShareText(code, options) {
   return t("share_vote", { code }) + lines.join("\n") + "\n\n" + groupInviteUrl(code);
 }
 function groupInviteUrl(code) {
-  return location.origin + "/?groupe=" + encodeURIComponent(code);
+  return publicOrigin() + "/?groupe=" + encodeURIComponent(code);
 }
 // Invite links (?groupe=CODE) open the group directly.
 async function joinGroupFromLink() {
@@ -1363,7 +1390,7 @@ function validPseudo(v) {
 }
 function avatarHtml(acc, cls) {
   const url = acc && acc.avatar_url;
-  if (url) return `<img class="${cls}" src="${escapeHtml(url)}" alt="" />`;
+  if (url) return `<img class="${cls}" src="${escapeHtml(assetUrl(url))}" alt="" />`;
   const letter = ((acc && (acc.nick || acc.first_name || acc.email)) || "?").trim().charAt(0).toUpperCase();
   return `<span class="${cls} avatar-letter">${escapeHtml(letter)}</span>`;
 }
@@ -1490,7 +1517,7 @@ function settingsPage() {
       <h1>${t("ev_title")}</h1>
       ${state.profileHint ? `<p class="hint">${escapeHtml(state.profileHint)}</p>` : ""}
       ${queue.length ? `<h2 class="section">${t("ev_queue")}</h2>${queue.map((ev) => `<div class="account-card">
-        ${ev.photo_url ? `<img class="avatar" src="${escapeHtml(ev.photo_url)}" alt="" />` : ""}
+        ${ev.photo_url ? `<img class="avatar" src="${escapeHtml(assetUrl(ev.photo_url))}" alt="" />` : ""}
         <p class="hint" style="margin-top:8px"><strong>${escapeHtml(ev.name)}</strong></p>
         <p class="hint">${escapeHtml(ev.address || "")}</p>
         <p class="hint">${escapeHtml(ev.description || "")}</p>
