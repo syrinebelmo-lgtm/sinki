@@ -2090,8 +2090,17 @@ def running_on_render():
     return bool(os.environ.get("RENDER") or os.environ.get("RENDER_SERVICE_ID"))
 
 
+def has_brevo_key():
+    return bool((os.environ.get("BREVO_API_KEY") or "").strip())
+
+
 def has_resend_key():
-    return bool((os.environ.get("RESEND_API_KEY") or "").strip())
+    """True when an HTTPS mail API is configured (Brevo or Resend).
+
+    Render blocks SMTP, so codes must go through an HTTP API. Brevo's free plan
+    (300 mails/day) works with a verified sender address and no domain.
+    """
+    return has_brevo_key() or bool((os.environ.get("RESEND_API_KEY") or "").strip())
 
 
 def has_smtp():
@@ -2122,7 +2131,8 @@ def mail_health():
     return {
         "resend": has_resend_key(),
         # onboarding@resend.dev only delivers to the Resend account owner.
-        "resend_test_sender": has_resend_key() and uses_resend_test_sender(),
+        "brevo": has_brevo_key(),
+        "resend_test_sender": has_resend_key() and not has_brevo_key() and uses_resend_test_sender(),
         "supabase": supabase_mail_ready(),
         "smtp": has_smtp() and not running_on_render(),
         "macos": sys.platform == "darwin" and not running_on_render(),
@@ -2519,7 +2529,44 @@ def send_sinki_mail(to, code, channels=None):
     return False, " ".join(errors).strip()
 
 
+def send_brevo_message(to, subject, html, text, reply_to="", timeout=MAIL_TIMEOUT):
+    sender = _mail_from_address("thesinkiisinki@gmail.com")
+    body = {
+        "sender": {"name": "SINKI", "email": sender},
+        "to": [{"email": to}],
+        "subject": subject,
+        "htmlContent": html,
+        "textContent": text,
+    }
+    if reply_to:
+        body["replyTo"] = {"email": reply_to}
+    req = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "api-key": (os.environ.get("BREVO_API_KEY") or "").strip(),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp.read()
+    except urllib.error.HTTPError as exc:
+        payload, raw = http_error_body(exc)
+        print(
+            "brevo_fail status=%s code=%s msg=%s"
+            % (exc.code, payload.get("code") or "-", str(payload.get("message") or raw)[:160]),
+            flush=True,
+        )
+        raise ValueError(SEND_FAILED)
+    return True
+
+
 def send_resend_message(to, subject, html, text, reply_to="", timeout=MAIL_TIMEOUT):
+    if has_brevo_key():
+        return send_brevo_message(to, subject, html, text, reply_to, timeout)
     key = (os.environ.get("RESEND_API_KEY") or "").strip()
     if not key:
         return False
