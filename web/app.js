@@ -1803,6 +1803,7 @@ function pickThree(list, vibe) {
     if (vibe === "fun" && (o.kind === "restaurant" || (o.category || "").includes("loisirs"))) s += 3;
     if ((vibe === "party" || vibe === "fun") && o.kind === "event" && (o.category || "") === "Soirées et concerts") s += 4;
     if ((vibe === "party" || state.type === "soirees") && isNightlifeItem(o)) s += 12;
+    if (state.moment === "evening" && isNightlifeItem(o)) s += 6;
     return s;
   }
   function nameKey(n) {
@@ -3412,8 +3413,19 @@ function outingPriceEur(item) {
   const p = Number(item.price_min);
   return Number.isFinite(p) ? p : null;
 }
+// "Temps disponible" and "Moment" used to be asked but ignored by the search.
+const DURATION_MAX = { short: 150, half: 300 };
+function respectsTimeFilters(item) {
+  const max = DURATION_MAX[state.duration];
+  const minutes = Number(item.duration_minutes);
+  if (max && Number.isFinite(minutes) && minutes > max) return false;
+  // Clubs and bars are not a morning outing.
+  if (state.moment === "morning" && isNightlifeItem(item)) return false;
+  return true;
+}
 function respectsMandatoryFilters(item) {
   if (state.type && state.type !== "all" && !matchesType(item, state.type)) return false;
+  if (!respectsTimeFilters(item)) return false;
   if (state.indoor === "in" && item.indoor === false) return false;
   if (state.indoor === "out" && item.indoor === true) return false;
   if (!state.unlimited && !onlyType("shopping") && !onlyType("randonnee")) {
