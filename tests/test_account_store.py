@@ -140,6 +140,20 @@ class AccountStoreTests(unittest.TestCase):
         self.assertIsNone(local_auth.user_from_token(sess))
         self.assertEqual(local_auth.pending_via("d@mail.com"), "")
 
+    def test_code_expires_after_15_minutes(self):
+        code = local_auth.request_code("x@mail.com")
+        real = local_auth.time.time
+        with patch.object(local_auth.time, "time", return_value=real() + local_auth.CODE_TTL + 1):
+            local_auth._mem = None
+            self.assertIsNone(local_auth.verify_code("x@mail.com", code))
+
+    def test_new_code_replaces_previous_one(self):
+        old = local_auth.request_code("y@mail.com")
+        new = local_auth.request_code("y@mail.com")
+        if old != new:
+            self.assertIsNone(local_auth.verify_code("y@mail.com", old))
+        self.assertIsNotNone(local_auth.verify_code("y@mail.com", new))
+
     def test_wrong_code_five_times_burns_it(self):
         code = local_auth.request_code("e@mail.com")
         wrong = "000000" if code != "000000" else "111111"
