@@ -23,7 +23,7 @@ class AuthDeliveryTests(unittest.TestCase):
             result = serve.send_login_code({"email": "new@example.com", "mode": "signup", "nick": "New"})
         self.assertTrue(result["ok"])
         send.assert_called_once_with("new@example.com", create_user=True)
-        pending.assert_called_once_with("new@example.com", "gotrue")
+        pending.assert_called_once_with("new@example.com", "gotrue", {"first_name": "", "last_name": "", "nick": "New"})
 
     def test_existing_login_does_not_create_auth_user(self):
         with patch.dict(os.environ, {"SUPABASE_URL": "https://example.supabase.co", "SUPABASE_SERVICE_ROLE": "test"}, clear=False), \

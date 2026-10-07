@@ -18,7 +18,10 @@ def _now():
 
 def _account_view(acc_or_user):
     src = acc_or_user if isinstance(acc_or_user, dict) else {}
-    meta = src.get("user_metadata") if isinstance(src.get("user_metadata"), dict) else {}
+    # Supabase Auth users can edit their own user_metadata: paid rights may only
+    # come from app_metadata (server-only) or from Sinki's own account store.
+    meta_key = "user_metadata" if src.get("sinki_local") else "app_metadata"
+    meta = src.get(meta_key) if isinstance(src.get(meta_key), dict) else {}
     raw = src.get("entitlements")
     if not isinstance(raw, dict):
         raw = meta.get("entitlements")

@@ -1919,7 +1919,7 @@ def public_user(user, phone=""):
     email = normalize_email(user.get("email") or "")
     meta = user.get("user_metadata") or {}
     ents = sinki_billing.entitlements_for_user(user)
-    plan = "plus" if sinki_billing.plus_active(user) else (meta.get("plan") or "free")
+    plan = "plus" if sinki_billing.plus_active(user) else "free"
     return {
         "id": user.get("id"),
         "email": email,
@@ -1994,9 +1994,15 @@ def can_send_support_mail():
     return (not running_on_render()) and (has_smtp() or sys.platform == "darwin")
 
 
+def uses_resend_test_sender():
+    return _mail_from_address(RESEND_SAFE_FROM).lower().endswith("@resend.dev")
+
+
 def mail_health():
     return {
         "resend": has_resend_key(),
+        # onboarding@resend.dev only delivers to the Resend account owner.
+        "resend_test_sender": has_resend_key() and uses_resend_test_sender(),
         "supabase": supabase_mail_ready(),
         "smtp": has_smtp() and not running_on_render(),
         "macos": sys.platform == "darwin" and not running_on_render(),
@@ -2338,6 +2344,11 @@ def send_event_moderation_mail(ev, origin=""):
         return False
 
 
+def dev_mail_console():
+    """SINKI_MAIL_DEV=console: print codes in the local terminal instead of mailing."""
+    return (os.environ.get("SINKI_MAIL_DEV") or "").strip().lower() == "console" and not running_on_render()
+
+
 def mail_unconfigured_error(extra=""):
     return SEND_FAILED
 
@@ -2348,6 +2359,9 @@ def send_sinki_mail(to, code, channels=None):
             channels = ["resend"] if has_resend_key() else []
         else:
             channels = ["resend", "smtp", "macos"]
+    if dev_mail_console():
+        print("DEV MAIL (local only) code=%s" % code, flush=True)
+        return True, ""
     errors = []
     for channel in channels:
         try:
@@ -2388,7 +2402,13 @@ def send_resend_message(to, subject, html, text, reply_to="", timeout=MAIL_TIMEO
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             resp.read()
-    except urllib.error.HTTPError:
+    except urllib.error.HTTPError as exc:
+        payload, raw = http_error_body(exc)
+        print(
+            "resend_fail status=%s name=%s msg=%s from_test_sender=%s"
+            % (exc.code, payload.get("name") or "-", str(payload.get("message") or raw)[:160], uses_resend_test_sender()),
+            flush=True,
+        )
         raise ValueError(SEND_FAILED)
     return True
 
@@ -2442,21 +2462,36 @@ def log_auth_send_ok(channel, exists=False, in_auth=False, mode=""):
     )
 
 
+def gotrue_find_user(email):
+    """Supabase Auth user dict, {} if absent. Raises on lookup failure.
+
+    The old version only read the first 200 users, so later accounts looked
+    "unknown" and got the wrong signup/login message.
+    """
+    email = normalize_email(email)
+    if not email:
+        return {}
+    page = 1
+    while page <= 50:
+        data = gotrue("GET", "/admin/users?page=%d&per_page=1000" % page)
+        users = data.get("users") or []
+        for user in users:
+            if normalize_email((user or {}).get("email")) == email:
+                return user
+        if len(users) < 1000:
+            return {}
+        page += 1
+    return {}
+
+
 def gotrue_user_exists(email):
     """True / False / None (lookup failed). Never logs the email."""
     if not supabase_mail_ready():
         return None
-    email = normalize_email(email)
-    if not email:
-        return False
     try:
-        data = gotrue("GET", "/admin/users?page=1&per_page=200")
+        return bool(gotrue_find_user(email))
     except Exception:
         return None
-    for user in data.get("users") or []:
-        if normalize_email((user or {}).get("email")) == email:
-            return True
-    return False
 
 
 class AuthMailError(ValueError):
@@ -2546,9 +2581,10 @@ def send_login_code(body, host_header=""):
 
     # No Resend: GoTrue must deliver (Render has no SMTP / Mail.app).
     if supabase_mail_ready():
+        # Mark first: if the store is down we must not mail a code nobody can verify.
+        local_auth.mark_pending_external(email, "gotrue", profile)
         try:
             send_gotrue_otp(email, create_user=(in_auth is not True))
-            local_auth.mark_pending_external(email, "gotrue")
             local_auth.record_otp_send(email)
             log_auth_send_ok("gotrue", exists=exists, in_auth=in_auth, mode=mode)
             return {"ok": True, "email_note": note}
@@ -3051,6 +3087,12 @@ def purge_signed_in_user(user):
         pass
     local_auth.delete_account(email)
     try:
+        auth_user = gotrue_find_user(email) if supabase_mail_ready() else {}
+        if auth_user.get("id"):
+            gotrue("DELETE", "/admin/users/" + urllib.parse.quote(str(auth_user["id"])))
+    except Exception as exc:
+        print("delete_account auth_user_fail %s" % type(exc).__name__, flush=True)
+    try:
         members = supabase_select(
             "group_members?member_token=eq." + urllib.parse.quote(str(uid)) + "&select=id"
         )
@@ -3267,6 +3309,26 @@ def sync_account(user, bearer, body):
     return account_payload(fresh, bearer)
 
 
+# Only these files are public. Everything else in web/ (Python sources, stores.json,
+# vendored packages) used to be downloadable by anyone.
+STATIC_FILES = {
+    "/index.html", "/download.html", "/privacy.html", "/delete-account.html", "/flyer.html",
+    "/app.js", "/i18n.js", "/catalog.js", "/billing.js", "/styles.css",
+    "/favicon.svg", "/biche-sinki.png", "/flyer-qr.png", "/flyer-qr.svg",
+}
+STATIC_DIRS = ("/biche/", "/icons/", "/public/")
+STATIC_EXT = (".png", ".jpg", ".jpeg", ".svg", ".webp", ".webmanifest")
+
+
+def static_allowed(path):
+    path = urllib.parse.unquote(path or "")
+    if ".." in path:
+        return False
+    if path in STATIC_FILES:
+        return True
+    return path.startswith(STATIC_DIRS) and path.lower().endswith(STATIC_EXT) and path.count("/") == 2
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=ROOT, **kwargs)
@@ -3315,7 +3377,17 @@ class Handler(SimpleHTTPRequestHandler):
             self.path = "/delete-account.html"
         elif path_only in ("/flyer", "/flyer-print"):
             self.path = "/flyer.html"
+        if not static_allowed(urllib.parse.urlparse(self.path).path):
+            self.send_error(404)
+            return
         return super().do_GET()
+
+    def do_HEAD(self):
+        path = urllib.parse.urlparse(self.path).path
+        if path != "/" and not static_allowed(path):
+            self.send_error(404)
+            return
+        return super().do_HEAD()
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -3608,6 +3680,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             status = 404 if isinstance(payload, dict) and payload.get("error") == "introuvable" else 200
             self.send_json(payload, status)
+        except local_auth.StoreUnavailable as exc:
+            print("auth_store_unavailable %s" % exc, flush=True)
+            self.send_json({"error": local_auth.StoreUnavailable.public}, 503)
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 400)
         except urllib.error.HTTPError as exc:
