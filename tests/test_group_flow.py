@@ -72,6 +72,23 @@ class GroupConcurrencyTests(unittest.TestCase):
         texts = [m["text"] for m in group["filters"]["chat"]]
         self.assertEqual(texts, ["moi aussi", "on y va ?"])
 
+    def test_reported_message_is_removed(self):
+        group = {"id": "g2", "share_code": "QAREP", "origin_label": "T", "status": "open", "updated_at": "s0",
+                 "filters": {"chat": [{"id": "m1", "name": "A", "text": "ok"}, {"id": "m2", "name": "B", "text": "insulte"}]}}
+
+        def select(path):
+            return [copy.deepcopy(group)] if "QAREP" in path else []
+
+        def request(method, path, body=None):
+            group["filters"] = copy.deepcopy(body["filters"])
+            group["updated_at"] = "s1"
+            return [copy.deepcopy(group)]
+
+        with patch.object(serve, "supabase_select", side_effect=select), patch.object(serve, "supabase_request", side_effect=request), \
+             patch.object(serve, "has_resend_key", return_value=False):
+            self.assertTrue(serve.report_group_message({"code": "QAREP", "message_id": "m2"})["ok"])
+        self.assertEqual([m["id"] for m in group["filters"]["chat"]], ["m1"])
+
     def test_empty_message_is_refused(self):
         with self.assertRaises(ValueError):
             serve.post_group_message("QACONC", "A", "   ")

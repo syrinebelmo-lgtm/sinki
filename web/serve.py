@@ -1865,6 +1865,36 @@ def update_group(code, change):
     raise ValueError("Le groupe est très actif, réessaie.")
 
 
+def report_group_message(body):
+    """Apple 1.2: users can flag objectionable messages. The message is hidden
+    for everyone and the team gets the text by mail (or in the logs)."""
+    code = str((body or {}).get("code") or "")
+    mid = str((body or {}).get("message_id") or "")
+    found = {}
+
+    def change(filters):
+        chat = []
+        for msg in filters.get("chat") or []:
+            if str(msg.get("id")) == mid and not found:
+                found.update(msg)
+                continue
+            chat.append(msg)
+        filters["chat"] = chat
+        return filters
+
+    update_group(code, change)
+    if not found:
+        raise ValueError("Message introuvable")
+    plain = "Message signalé dans le groupe %s\nAuteur : %s\nTexte : %s" % (code, found.get("name"), found.get("text"))
+    print("chat_report group=%s message=%s" % (code, mid), flush=True)
+    if has_resend_key():
+        try:
+            send_resend_message(SUPPORT_TO, "Sinki — message signalé", "<pre>%s</pre>" % plain.replace("<", "&lt;"), plain)
+        except Exception:
+            pass
+    return {"ok": True}
+
+
 def compact_outing(outing):
     if not isinstance(outing, dict):
         return None
@@ -3769,6 +3799,8 @@ class Handler(SimpleHTTPRequestHandler):
                     self.send_json({"error": "non connecté"}, 401)
                     return
                 payload = purge_signed_in_user(user)
+            elif path == "/api/report" and post:
+                payload = report_group_message(self.json_body())
             elif path == "/api/groups/message" and post:
                 body = self.json_body()
                 payload = post_group_message(

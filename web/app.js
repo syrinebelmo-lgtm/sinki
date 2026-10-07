@@ -1235,6 +1235,9 @@ function voterId() {
   }
   return id;
 }
+function blockedNames() {
+  try { return loadObj("sinki-blocked") || []; } catch { return []; }
+}
 function applyGroupState(g) {
   if (!g || g.error) return;
   state.groupCode = g.share_code || state.groupCode;
@@ -2104,7 +2107,8 @@ function render() {
   } else if (state.screen === "favs") {
     body = `<div class="page has-nav"><h1>${t("favs_title")}</h1>${state.favs.length ? mascot("emerveillee", t("favs_full")) + state.favs.map((item) => cardHtml(item, "fav")).join("") : mascot("emerveillee", t("favs_empty"))}${navHtml("favs")}</div>`;
   } else if (state.screen === "group") {
-    const chat = state.groupChat.map((m) => `<div class="bubble"><div class="who">${escapeHtml(m.name)}</div>${escapeHtml(m.text || "")}${m.outing ? `<button class="share-card" data-detail="${escapeHtml(String(m.outing.id || ""))}">${escapeHtml(m.outing.name)} · ${priceLabel(m.outing)} · ${t("see_all")}</button>` : ""}</div>`).join("");
+    const blocked = blockedNames();
+    const chat = state.groupChat.filter((m) => !blocked.includes(String(m.name || "").toLowerCase())).map((m) => `<div class="bubble"><div class="who">${escapeHtml(m.name)}${m.id && m.name !== chatDisplayName() ? ` <button class="linkish" data-act="chat-report" data-id="${escapeHtml(String(m.id))}">${t("chat_report")}</button> <button class="linkish" data-act="chat-block" data-id="${escapeHtml(String(m.name))}">${t("chat_block")}</button>` : ""}</div>${escapeHtml(m.text || "")}${m.outing ? `<button class="share-card" data-detail="${escapeHtml(String(m.outing.id || ""))}">${escapeHtml(m.outing.name)} · ${priceLabel(m.outing)} · ${t("see_all")}</button>` : ""}</div>`).join("");
     const autoNick = String((state.account && state.account.first_name) || "").trim();
     const nickField = autoNick
       ? `<p class="hint">${t("nick_auto", { name: autoNick })}</p>`
@@ -2601,6 +2605,24 @@ function bind() {
       applyGroupState(g);
       render();
       persistAccount();
+      return;
+    }
+    if (act === "chat-report") {
+      const msg = state.groupChat.find((m) => String(m.id) === el.dataset.id);
+      if (!msg || !confirm(t("chat_report_ask"))) return;
+      const r = await fetch("/api/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: state.groupCode, message_id: msg.id }),
+      }).catch(() => null);
+      alert(r && r.ok ? t("chat_report_ok") : t("chat_report_err"));
+      return;
+    }
+    if (act === "chat-block") {
+      const name = String(el.dataset.id || "").toLowerCase();
+      if (!name || !confirm(t("chat_block_ask"))) return;
+      save("sinki-blocked", [...new Set([...blockedNames(), name])]);
+      render();
       return;
     }
     if (act === "leave-group") {
