@@ -1,0 +1,24 @@
+{
+  "name": "sinki-mobile",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Applications iOS et Android de SINKI (Capacitor) : emballent web/ et parlent au serveur en ligne.",
+  "type": "module",
+  "scripts": {
+    "build:web": "node build-web.mjs",
+    "sync": "node build-web.mjs && cap sync",
+    "ios": "node build-web.mjs && cap sync ios && cap open ios",
+    "android": "node build-web.mjs && cap sync android && cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/geolocation": "^8.2.3",
+    "@capacitor/ios": "^8.5.2",
+    "@capacitor/share": "^8.0.3",
+    "@capacitor/splash-screen": "^8.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2"
+  }
+}
