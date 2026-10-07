@@ -46,7 +46,7 @@ Légende : ✅ corrigé et vérifié · 🟡 corrigé mais pas encore vérifié 
 | 17 | Adresse de contact injoignable | `bonjour@sinki.app` n'a aucun serveur mail (pas d'enregistrement MX) | Remplacée par `thesinkiisinki@gmail.com` dans la politique de confidentialité, la page de suppression et l'app | ✅ **à confirmer par toi** |
 | 18 | Multi-catégories (activité ET shopping) | Fonctionnait déjà dans la vraie app | Vérifié | ✅ testé |
 
-Tests automatiques : `python3 -m unittest discover -s tests` (33 tests OK) et `node --test tests/test_multi_select.mjs` (2 OK).
+Tests automatiques : `python3 -m unittest discover -s tests` (27 tests OK) et `node --test tests/test_multi_select.mjs` (2 OK).
 
 Points constatés mais non corrigés :
 - ⏳ **Date, durée, moment et transport du formulaire ne sont pas utilisés par la recherche.** Seuls ville, rayon, budget, catégories et intérieur/extérieur filtrent. Il faut soit les brancher, soit les retirer du formulaire.
