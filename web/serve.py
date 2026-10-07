@@ -2428,15 +2428,35 @@ def send_event_moderation_mail(ev, origin=""):
         approve,
         reject,
     )
+    subject = "Sinki — événement à valider"
     try:
-        return send_macos_notice(to, "Sinki — événement à valider", plain)
-    except Exception:
+        if has_resend_key():
+            html = "<pre style=\"white-space:pre-wrap\">%s</pre>" % plain.replace("&", "&amp;").replace("<", "&lt;")
+            return send_resend_message(to, subject, html, plain)
+        if running_on_render():
+            print("event_moderation_mail_skipped no_resend", flush=True)
+            return False
+        return send_macos_notice(to, subject, plain)
+    except Exception as exc:
+        print("event_moderation_mail_fail %s" % type(exc).__name__, flush=True)
         return False
 
 
 def dev_mail_console():
     """SINKI_MAIL_DEV=console: print codes in the local terminal instead of mailing."""
     return (os.environ.get("SINKI_MAIL_DEV") or "").strip().lower() == "console" and not running_on_render()
+
+
+def events_enabled():
+    """Organizer events live in data/events.json. Render's disk is wiped on every
+    restart, so submissions vanished. Off on Render until a durable store exists
+    (SINKI_EVENTS_ENABLED=1 to force)."""
+    if (os.environ.get("SINKI_EVENTS_ENABLED") or "").strip() == "1":
+        return True
+    return not running_on_render()
+
+
+EVENTS_OFF = "La publication d’événements n’est pas encore ouverte. Écris-nous à %s pour annoncer le tien." % SUPPORT_TO
 
 
 def mail_unconfigured_error(extra=""):
@@ -3587,7 +3607,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 120, "mail": mail_health()}
+                payload = {"ok": True, "app": "sinki", "v": 120, "mail": mail_health(), "events": events_enabled()}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
@@ -3666,6 +3686,9 @@ class Handler(SimpleHTTPRequestHandler):
                 user = user_from_bearer(self.headers.get("Authorization"))
                 if not user:
                     self.send_json({"error": "non connecté"}, 401)
+                    return
+                if not events_enabled():
+                    self.send_json({"error": EVENTS_OFF}, 503)
                     return
                 row = event_store.create_event(user.get("email"), self.json_body())
                 send_event_moderation_mail(row, self.request_origin())

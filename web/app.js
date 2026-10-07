@@ -2340,7 +2340,7 @@ function bind() {
         });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) {
-          state.profileHint = data.error === "photo" ? t("set_photo_err") : t("ev_need_fields");
+          state.profileHint = r.status === 503 && data.error ? data.error : data.error === "photo" ? t("set_photo_err") : t("ev_need_fields");
           render();
           return;
         }

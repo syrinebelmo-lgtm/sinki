@@ -45,7 +45,7 @@ def _save(data):
 
 
 def moderator_email():
-    return (os.environ.get("SINKI_MODERATOR_EMAIL") or "bonjour@sinki.app").strip().lower()
+    return (os.environ.get("SINKI_MODERATOR_EMAIL") or "thesinkiisinki@gmail.com").strip().lower()
 
 
 def is_moderator(email, local=False):
