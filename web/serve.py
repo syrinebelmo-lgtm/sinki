@@ -271,6 +271,20 @@ LODGING_KEEP = re.compile(
     r"\b(h[oô]tel|hotel)[\s-]*(de[\s-]*ville|dieu)\b",
     re.I,
 )
+LODGING_MONUMENT = re.compile(r"\b(mus[eé]e|museum|monument|particulier|de la marine|de cluny|des invalides)\b", re.I)
+
+
+def is_lodging(row):
+    """Hotels are not outings. Keeps Hôtel de Ville / Hôtel-Dieu and historic
+    hôtels that are museums or monuments (Hôtel de la Marine…)."""
+    name = row.get("name") or ""
+    if LODGING_NAME.search(name):
+        return True
+    if not LODGING_GENERIC.search(name) or LODGING_KEEP.search(name):
+        return False
+    return not ((row.get("category") or "") == CAT_CULT or LODGING_MONUMENT.search(name))
+
+
 # is_nightlife lets dance schools through via description "Dancing." / NIGHT_KEEP.
 SOIREE_DROP = re.compile(
     r"\b("
@@ -1515,10 +1529,7 @@ def fetch_outings_fresh(params):
             return False
         if indoor == "out" and row.get("indoor") is True:
             return False
-        lodging_name = row.get("name") or ""
-        if LODGING_NAME.search(lodging_name):
-            return False
-        if LODGING_GENERIC.search(lodging_name) and not LODGING_KEEP.search(lodging_name):
+        if is_lodging(row):
             return False
         if (cat == "Shopping" or typ == "shopping") and is_grocery_shop(row.get("name")):
             return False
@@ -1793,7 +1804,7 @@ def search_catalog(q, country=""):
         rows = [
             row
             for row in rows
-            if not LODGING_NAME.search(row.get("name") or "")
+            if not is_lodging(row)
             and not is_grocery_shop(row.get("name") or "")
         ]
         outings = quality_pool(unescape_payload(rows))
