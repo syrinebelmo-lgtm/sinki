@@ -42,7 +42,7 @@ function typeList() {
   return [
     ["all", "✨ " + t("type_all")],
     ["activites", "🎳 " + t("type_act")],
-    ["evenements", "🎪 " + t("type_evt")],
+    // "Événements" hidden: catalogue events have no dates yet (see live_events_filter in serve.py).
     ["restaurants", "☕ " + t("type_rest")],
     ["shopping", "🛍️ " + t("type_shop")],
     ["randonnee", "🥾 " + t("type_hike")],
@@ -217,6 +217,13 @@ function hasPlus() {
 function hasUnlimited() {
   return Boolean(liveEnt("unlimited")) || hasPlus();
 }
+// Paid limits only make sense once a real store purchase is possible (native
+// StoreKit / Play bridge). Without it, the 6-a-day cap trapped people behind a
+// paywall nobody could pay, and "Sinki me propose" kept showing the same card.
+function billingAvailable() {
+  const iap = window.SinkiIAP;
+  return Boolean(iap && typeof iap.purchase === "function");
+}
 function hasNoAds() {
   return Boolean(liveEnt("no_ads"));
 }
@@ -231,7 +238,7 @@ function loadQuota() {
   return { day, ids: q.ids };
 }
 function remainingToday() {
-  if (hasUnlimited()) return Infinity;
+  if (hasUnlimited() || !billingAvailable()) return Infinity;
   return Math.max(0, FREE_DAY_CAP - loadQuota().ids.length);
 }
 function quotaBlocked() {
@@ -245,7 +252,7 @@ function currentPlanLabel() {
   return bits.length ? bits.join(" · ") : t("set_plan_free");
 }
 function quotaStatusHtml() {
-  if (hasUnlimited()) return "";
+  if (hasUnlimited() || !billingAvailable()) return "";
   if (quotaBlocked()) {
     if (!state.payFamily) state.payFamily = "plus";
     return `<div class="account-card quota-limit">
@@ -257,7 +264,7 @@ function quotaStatusHtml() {
   return `<p class="hint">${t("quota_left", { n: remainingToday(), max: FREE_DAY_CAP })}</p>`;
 }
 function recordFound(rows) {
-  if (hasUnlimited()) return rows || [];
+  if (hasUnlimited() || !billingAvailable()) return rows || [];
   const q = loadQuota();
   const out = [];
   (rows || []).forEach((row) => {
@@ -279,7 +286,7 @@ function askQuota() {
   return true;
 }
 function askPlus(reason) {
-  if (hasPlus()) return false;
+  if (hasPlus() || !billingAvailable()) return false;
   openPaywall(reason || "world");
   return true;
 }
@@ -369,6 +376,7 @@ function buySubBtn(family) {
   return `<button class="btn" data-act="pay-buy" data-id="${escapeHtml(prod.id)}" ${busy || state.billingBusy ? "disabled" : ""}>${busy ? t("pay_loading") : t("pay_buy")}</button>`;
 }
 function tariffsBody() {
+  if (!billingAvailable()) return `<p class="hint">${t("pay_soon_free")}</p>`;
   const fam = state.payFamily || "plus";
   const hint = state.billingHint ? `<p class="${/ok|actif/i.test(state.billingHint) || state.billingHint === t("pay_ok") ? "hint" : "empty"}">${escapeHtml(state.billingHint)}</p>` : "";
   const tabs = `<div class="row">
@@ -1435,7 +1443,7 @@ function settingsPage() {
       ${mascot("emerveillee", t("pay_catalog_lead"))}
       <div class="account-card">
         <p class="hint" style="margin-top:0"><strong>${t("set_plan_free")}</strong>${hasPlus() || hasUnlimited() ? "" : " · " + t("set_plan_current")}</p>
-        <p class="hint">${t("set_plan_free_lead", { country: home, n: FREE_DAY_CAP })}</p>
+        ${billingAvailable() ? `<p class="hint">${t("set_plan_free_lead", { country: home, n: FREE_DAY_CAP })}</p>` : ""}
       </div>
       ${hasPlus() ? `<p class="hint">${t("set_plan_plus_on")}</p>` : ""}
       ${tariffsBody()}
@@ -3879,7 +3887,7 @@ bootAccount().then(() => {
   render();
 });
 applyHomeArea();
-if (!hasPlus() && state.exploreScope === "world") {
+if (billingAvailable() && !hasPlus() && state.exploreScope === "world") {
   state.exploreScope = "home";
   localStorage.setItem("sinki-explore-scope", "home");
 }

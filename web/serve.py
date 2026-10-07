@@ -804,9 +804,23 @@ def safe_select(query):
         return []
 
 
+def live_events_filter():
+    """Hide events that are over or have no date at all.
+
+    The DATAtourisme import never stored event dates (30 547 active events had
+    none), so "Concerto pour clarinette" could be years old. Places are
+    unaffected. Uses and=(…) so it combines with the type filters' or=(…).
+    """
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return (
+        "&and=(or(kind.is.null,kind.neq.event,event_ends_at.gte." + now
+        + ",and(event_ends_at.is.null,event_starts_at.gte." + now + ")))"
+    )
+
+
 def supabase_outings(filters, limit, pictured_only=False):
     limit = max(1, min(int(limit or 80), 80))
-    base = "outings?select=" + SELECT + "&is_active=eq.true" + filters
+    base = "outings?select=" + SELECT + "&is_active=eq.true" + live_events_filter() + filters
     pictured = safe_select(base + "&photo_url=like.http*&limit=" + str(limit))
     if pictured_only or len(pictured) >= limit:
         return pictured
@@ -1751,7 +1765,7 @@ def search_catalog(q, country=""):
                     outings = thrift + rest_shop
     if not outings and len(folded) >= 2:
         safe = "".join(ch if ch not in ",()*%" else " " for ch in (place or raw))[:40].strip()
-        path = "outings?select=" + SELECT + "&is_active=eq.true"
+        path = "outings?select=" + SELECT + "&is_active=eq.true" + live_events_filter()
         pictured = "&photo_url=like.http*"
         if activity_cat:
             path += "&category=eq." + urllib.parse.quote(activity_cat)
@@ -1768,7 +1782,7 @@ def search_catalog(q, country=""):
             rows = supabase_select(
                 "outings?select="
                 + SELECT
-                + "&is_active=eq.true&name=ilike."
+                + "&is_active=eq.true" + live_events_filter() + "&name=ilike."
                 + urllib.parse.quote("*" + safe + "*")
                 + pictured
                 + "&limit=80"
