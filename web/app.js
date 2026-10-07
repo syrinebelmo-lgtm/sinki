@@ -1279,7 +1279,29 @@ function pollHtml() {
 }
 function voteShareText(code, options) {
   const lines = (options || []).map((r, i) => (i + 1) + ". " + decodeText(r.name) + " — " + priceLabel(r));
-  return t("share_vote", { code }) + lines.join("\n");
+  return t("share_vote", { code }) + lines.join("\n") + "\n\n" + groupInviteUrl(code);
+}
+function groupInviteUrl(code) {
+  return location.origin + "/?groupe=" + encodeURIComponent(code);
+}
+// Invite links (?groupe=CODE) open the group directly.
+async function joinGroupFromLink() {
+  const params = new URLSearchParams(location.search);
+  const code = (params.get("groupe") || "").trim().toUpperCase();
+  if (!code) return;
+  params.delete("groupe");
+  history.replaceState(null, "", location.pathname + (params.toString() ? "?" + params : "") + location.hash);
+  try {
+    const r = await fetch("/api/groups?code=" + encodeURIComponent(code));
+    const g = await r.json();
+    if (!r.ok || g.error) { alert(t("err_code")); return; }
+    applyGroupState(g);
+    state.screen = "group";
+    render();
+    persistAccount();
+  } catch {
+    alert(t("err_code"));
+  }
 }
 async function copyText(text) {
   try {
@@ -3162,14 +3184,27 @@ async function sendGroupMessage(text, outing) {
   render();
 }
 
-async function refreshGroup() {
+async function refreshGroup(quiet) {
   if (!state.groupCode) return;
-  const r = await fetch("/api/groups?code=" + encodeURIComponent(state.groupCode));
-  if (!r.ok) { render(); return; }
+  const r = await fetch("/api/groups?code=" + encodeURIComponent(state.groupCode)).catch(() => null);
+  if (!r || !r.ok) { if (!quiet) render(); return; }
   const g = await r.json();
+  const before = JSON.stringify([state.groupChat, state.groupPoll, state.groupVotes]);
   applyGroupState(g);
+  if (quiet && before === JSON.stringify([state.groupChat, state.groupPoll, state.groupVotes])) return;
+  // Keep what the person is typing across the re-render.
+  const box = $("#chatmsg");
+  const draft = box ? box.value : "";
+  const focused = box && document.activeElement === box;
   render();
+  const again = $("#chatmsg");
+  if (again && draft) again.value = draft;
+  if (again && focused) again.focus();
 }
+// Friends' messages and votes appear without leaving the Group tab.
+setInterval(() => {
+  if (state.screen === "group" && state.groupCode && document.visibilityState === "visible") refreshGroup(true);
+}, 8000);
 
 async function shareAndVote() {
   const options = shareOptions();
@@ -3882,6 +3917,7 @@ async function bootAccount() {
 }
 
 bootAccount().then(() => {
+  joinGroupFromLink();
   loadPublicEvents().then(render);
   loadOrganizerEvents();
   render();
