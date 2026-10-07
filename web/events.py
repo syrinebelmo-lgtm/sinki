@@ -11,7 +11,7 @@ import time
 import uuid
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.abspath(os.path.join(ROOT, "..", "data"))
+DATA_DIR = os.path.abspath(os.environ.get("SINKI_DATA_DIR") or os.path.join(ROOT, "..", "data"))
 PATH = os.path.join(DATA_DIR, "events.json")
 PHOTO_DIR = os.path.join(DATA_DIR, "event_photos")
 BOOST_SEC = 24 * 60 * 60

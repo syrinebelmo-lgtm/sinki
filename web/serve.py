@@ -489,6 +489,53 @@ def _money_pair(row):
     return a, b
 
 
+# Words that describe a type of place, not a specific one: a file called
+# "Cinéma Lumière Terreaux" must not illustrate "Cinéma Lumière Fourmi".
+PHOTO_GENERIC = set("""
+cinema theatre musee museum restaurant cafe bar pub brasserie bistrot boutique magasin shop store
+galerie gallery parc park jardin garden square place rue avenue boulevard quai pont eglise church
+chapelle cathedrale chateau castle tour salle espace centre center maison gare station marche
+hotel club piscine plage lac musee lieu site office tourisme the and les des aux sur sous pour
+avec chez saint sainte
+""".split())
+
+
+def photo_matches_place(url, name, address=""):
+    """True unless a Wikimedia file name clearly describes another place.
+
+    Only Commons/Wikipedia photos are checked: their file name is the one
+    reliable clue we have. Photos from the source itself are kept.
+    """
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if "wikimedia.org" not in host and "wikipedia.org" not in host:
+        return True
+    path = urllib.parse.unquote(urllib.parse.urlparse(url).path)
+    if not re.search(r"\.(jpe?g|png|webp|gif|tiff?)$", path, re.I):
+        return False
+    file_words = set(outing_name_key(path.rsplit("/", 1)[-1].rsplit(".", 1)[0]).split())
+
+    def distinctive(text):
+        words = [w for w in outing_tokens(text) if w not in PHOTO_GENERIC and not w.isdigit()]
+        return words + [w for w in outing_name_key(text).split() if w.isdigit()]
+
+    # "Musée du quai Branly – Jacques Chirac": the subtitle is optional.
+    main = re.split(r"\s[–—:-]\s|\(", name or "", maxsplit=1)[0]
+    wanted = distinctive(main) or distinctive(name)
+    if not wanted:
+        return False  # "Le Cinéma" alone cannot be checked against a file name
+    hits = sum(1 for w in wanted if w in file_words)
+    if hits < max(1, math.ceil(len(wanted) * 2 / 3)):
+        return False
+    # One shared word is weak evidence ("Le Maryland" vs "University of Maryland
+    # Station", "Shen Yun" vs a handball match): never enough on its own.
+    if hits < 2:
+        return False
+    # Names repeat across the world ("Home Sweet Home", "Red House"): the file
+    # must also name the town or street of the outing.
+    where = {w for w in outing_name_key(address).split() if len(w) > 3 and not w.isdigit()} - PHOTO_GENERIC - STOP_WORDS
+    return bool(where & file_words)
+
+
 def qc_outing(row):
     """Photo cassée → vide. 0 € sur un lieu payant → prix à confirmer. Billets / pièce d’identité seulement si utile."""
     if not isinstance(row, dict):
@@ -501,6 +548,8 @@ def qc_outing(row):
         place_name = (row.get("name") or "").lower()
         unrelated_infrastructure = re.search(r"\b(bus stop|bus station|arr[eê]t de bus|parking|car park)\b", filename)
         if unrelated_infrastructure and not re.search(r"\b(bus stop|bus station|arr[eê]t de bus|parking|car park)\b", place_name):
+            row["photo_url"] = None
+        elif not photo_matches_place(url, row.get("name") or "", row.get("address") or ""):
             row["photo_url"] = None
     cat = row.get("category") or ""
     name = row.get("name") or ""

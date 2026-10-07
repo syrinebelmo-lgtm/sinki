@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 import billing as sinki_billing
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.abspath(os.path.join(ROOT, "..", "data"))
+DATA_DIR = os.path.abspath(os.environ.get("SINKI_DATA_DIR") or os.path.join(ROOT, "..", "data"))
 PATH = os.path.join(DATA_DIR, "accounts.json")
 BACKUP = os.path.join(DATA_DIR, "accounts.bak.json")
 AVATAR_DIR = os.path.join(DATA_DIR, "avatars")
