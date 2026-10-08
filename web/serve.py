@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import secrets
 import smtplib
 import subprocess
 import sys
@@ -270,6 +271,20 @@ LODGING_KEEP = re.compile(
     r"\b(h[oô]tel|hotel)[\s-]*(de[\s-]*ville|dieu)\b",
     re.I,
 )
+LODGING_MONUMENT = re.compile(r"\b(mus[eé]e|museum|monument|particulier|de la marine|de cluny|des invalides)\b", re.I)
+
+
+def is_lodging(row):
+    """Hotels are not outings. Keeps Hôtel de Ville / Hôtel-Dieu and historic
+    hôtels that are museums or monuments (Hôtel de la Marine…)."""
+    name = row.get("name") or ""
+    if LODGING_NAME.search(name):
+        return True
+    if not LODGING_GENERIC.search(name) or LODGING_KEEP.search(name):
+        return False
+    return not ((row.get("category") or "") == CAT_CULT or LODGING_MONUMENT.search(name))
+
+
 # is_nightlife lets dance schools through via description "Dancing." / NIGHT_KEEP.
 SOIREE_DROP = re.compile(
     r"\b("
@@ -489,6 +504,53 @@ def _money_pair(row):
     return a, b
 
 
+# Words that describe a type of place, not a specific one: a file called
+# "Cinéma Lumière Terreaux" must not illustrate "Cinéma Lumière Fourmi".
+PHOTO_GENERIC = set("""
+cinema theatre musee museum restaurant cafe bar pub brasserie bistrot boutique magasin shop store
+galerie gallery parc park jardin garden square place rue avenue boulevard quai pont eglise church
+chapelle cathedrale chateau castle tour salle espace centre center maison gare station marche
+hotel club piscine plage lac musee lieu site office tourisme the and les des aux sur sous pour
+avec chez saint sainte
+""".split())
+
+
+def photo_matches_place(url, name, address=""):
+    """True unless a Wikimedia file name clearly describes another place.
+
+    Only Commons/Wikipedia photos are checked: their file name is the one
+    reliable clue we have. Photos from the source itself are kept.
+    """
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if "wikimedia.org" not in host and "wikipedia.org" not in host:
+        return True
+    path = urllib.parse.unquote(urllib.parse.urlparse(url).path)
+    if not re.search(r"\.(jpe?g|png|webp|gif|tiff?)$", path, re.I):
+        return False
+    file_words = set(outing_name_key(path.rsplit("/", 1)[-1].rsplit(".", 1)[0]).split())
+
+    def distinctive(text):
+        words = [w for w in outing_tokens(text) if w not in PHOTO_GENERIC and not w.isdigit()]
+        return words + [w for w in outing_name_key(text).split() if w.isdigit()]
+
+    # "Musée du quai Branly – Jacques Chirac": the subtitle is optional.
+    main = re.split(r"\s[–—:-]\s|\(", name or "", maxsplit=1)[0]
+    wanted = distinctive(main) or distinctive(name)
+    if not wanted:
+        return False  # "Le Cinéma" alone cannot be checked against a file name
+    hits = sum(1 for w in wanted if w in file_words)
+    if hits < max(1, math.ceil(len(wanted) * 2 / 3)):
+        return False
+    # One shared word is weak evidence ("Le Maryland" vs "University of Maryland
+    # Station", "Shen Yun" vs a handball match): never enough on its own.
+    if hits < 2:
+        return False
+    # Names repeat across the world ("Home Sweet Home", "Red House"): the file
+    # must also name the town or street of the outing.
+    where = {w for w in outing_name_key(address).split() if len(w) > 3 and not w.isdigit()} - PHOTO_GENERIC - STOP_WORDS
+    return bool(where & file_words)
+
+
 def qc_outing(row):
     """Photo cassée → vide. 0 € sur un lieu payant → prix à confirmer. Billets / pièce d’identité seulement si utile."""
     if not isinstance(row, dict):
@@ -501,6 +563,8 @@ def qc_outing(row):
         place_name = (row.get("name") or "").lower()
         unrelated_infrastructure = re.search(r"\b(bus stop|bus station|arr[eê]t de bus|parking|car park)\b", filename)
         if unrelated_infrastructure and not re.search(r"\b(bus stop|bus station|arr[eê]t de bus|parking|car park)\b", place_name):
+            row["photo_url"] = None
+        elif not photo_matches_place(url, row.get("name") or "", row.get("address") or ""):
             row["photo_url"] = None
     cat = row.get("category") or ""
     name = row.get("name") or ""
@@ -755,9 +819,23 @@ def safe_select(query):
         return []
 
 
+def live_events_filter():
+    """Hide events that are over or have no date at all.
+
+    The DATAtourisme import never stored event dates (30 547 active events had
+    none), so "Concerto pour clarinette" could be years old. Places are
+    unaffected. Uses and=(…) so it combines with the type filters' or=(…).
+    """
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return (
+        "&and=(or(kind.is.null,kind.neq.event,event_ends_at.gte." + now
+        + ",and(event_ends_at.is.null,event_starts_at.gte." + now + ")))"
+    )
+
+
 def supabase_outings(filters, limit, pictured_only=False):
     limit = max(1, min(int(limit or 80), 80))
-    base = "outings?select=" + SELECT + "&is_active=eq.true" + filters
+    base = "outings?select=" + SELECT + "&is_active=eq.true" + live_events_filter() + filters
     pictured = safe_select(base + "&photo_url=like.http*&limit=" + str(limit))
     if pictured_only or len(pictured) >= limit:
         return pictured
@@ -1172,7 +1250,7 @@ def nearest_city_row(lat, lon):
 
 SELECT = (
     "id,city_id,kind,category,name,description,address,latitude,longitude,"
-    "price_min,price_max,currency,duration_minutes,indoor,photo_url,photo_license,"
+    "price_min,price_max,currency,duration_minutes,indoor,photo_url,photo_license,photo_credit,"
     "source_url,website_url,source_name,source_id"
 )
 
@@ -1451,10 +1529,7 @@ def fetch_outings_fresh(params):
             return False
         if indoor == "out" and row.get("indoor") is True:
             return False
-        lodging_name = row.get("name") or ""
-        if LODGING_NAME.search(lodging_name):
-            return False
-        if LODGING_GENERIC.search(lodging_name) and not LODGING_KEEP.search(lodging_name):
+        if is_lodging(row):
             return False
         if (cat == "Shopping" or typ == "shopping") and is_grocery_shop(row.get("name")):
             return False
@@ -1702,7 +1777,7 @@ def search_catalog(q, country=""):
                     outings = thrift + rest_shop
     if not outings and len(folded) >= 2:
         safe = "".join(ch if ch not in ",()*%" else " " for ch in (place or raw))[:40].strip()
-        path = "outings?select=" + SELECT + "&is_active=eq.true"
+        path = "outings?select=" + SELECT + "&is_active=eq.true" + live_events_filter()
         pictured = "&photo_url=like.http*"
         if activity_cat:
             path += "&category=eq." + urllib.parse.quote(activity_cat)
@@ -1719,7 +1794,7 @@ def search_catalog(q, country=""):
             rows = supabase_select(
                 "outings?select="
                 + SELECT
-                + "&is_active=eq.true&name=ilike."
+                + "&is_active=eq.true" + live_events_filter() + "&name=ilike."
                 + urllib.parse.quote("*" + safe + "*")
                 + pictured
                 + "&limit=80"
@@ -1729,7 +1804,7 @@ def search_catalog(q, country=""):
         rows = [
             row
             for row in rows
-            if not LODGING_NAME.search(row.get("name") or "")
+            if not is_lodging(row)
             and not is_grocery_shop(row.get("name") or "")
         ]
         outings = quality_pool(unescape_payload(rows))
@@ -1759,11 +1834,65 @@ def get_group(code):
     code = (code or "").strip().upper()
     if len(code) < 4 or code == local_auth.AUTH_SHARE:
         return None
-    rows = supabase_select("groups?share_code=eq." + urllib.parse.quote(code) + "&select=id,share_code,origin_label,filters,status")
+    rows = supabase_select("groups?share_code=eq." + urllib.parse.quote(code) + "&select=id,share_code,origin_label,filters,status,updated_at")
     row = rows[0] if rows else None
     if row and (row.get("origin_label") or "") == local_auth.AUTH_LABEL:
         return None
     return row
+
+
+def update_group(code, change):
+    """Read-modify-write of a group's filters, retried if someone wrote first.
+
+    Two friends posting at the same moment used to overwrite each other's message.
+    """
+    for _attempt in range(6):
+        group = get_group(code)
+        if not group:
+            raise ValueError("Groupe introuvable")
+        filters = change(group_filters(group))
+        stamp = group.get("updated_at")
+        guard = ("&updated_at=eq." + urllib.parse.quote(stamp)) if stamp else "&updated_at=is.null"
+        rows = supabase_request(
+            "PATCH",
+            "groups?id=eq." + urllib.parse.quote(str(group["id"])) + guard,
+            {"filters": filters, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + ".%06d+00:00" % (time.time() % 1 * 1e6)},
+        )
+        if rows:
+            row = rows[0]
+            return {k: row.get(k) for k in ("id", "share_code", "origin_label", "filters", "status", "updated_at")}
+        time.sleep(0.05)
+    raise ValueError("Le groupe est très actif, réessaie.")
+
+
+def report_group_message(body):
+    """Apple 1.2: users can flag objectionable messages. The message is hidden
+    for everyone and the team gets the text by mail (or in the logs)."""
+    code = str((body or {}).get("code") or "")
+    mid = str((body or {}).get("message_id") or "")
+    found = {}
+
+    def change(filters):
+        chat = []
+        for msg in filters.get("chat") or []:
+            if str(msg.get("id")) == mid and not found:
+                found.update(msg)
+                continue
+            chat.append(msg)
+        filters["chat"] = chat
+        return filters
+
+    update_group(code, change)
+    if not found:
+        raise ValueError("Message introuvable")
+    plain = "Message signalé dans le groupe %s\nAuteur : %s\nTexte : %s" % (code, found.get("name"), found.get("text"))
+    print("chat_report group=%s message=%s" % (code, mid), flush=True)
+    if has_resend_key():
+        try:
+            send_resend_message(SUPPORT_TO, "Sinki — message signalé", "<pre>%s</pre>" % plain.replace("<", "&lt;"), plain)
+        except Exception:
+            pass
+    return {"ok": True}
 
 
 def compact_outing(outing):
@@ -1789,36 +1918,29 @@ def group_filters(group):
     return filters if isinstance(filters, dict) else {}
 
 
-def save_group_filters(group, filters):
-    supabase_request("PATCH", "groups?id=eq." + urllib.parse.quote(str(group["id"])), {"filters": filters})
-    group["filters"] = filters
-    return group
-
 
 def post_group_message(code, display_name, text, outing=None):
-    group = get_group(code)
-    if not group:
-        raise ValueError("Groupe introuvable")
-    filters = group_filters(group)
-    chat = list(filters.get("chat") or [])
-    msg = {
-        "id": str(len(chat) + 1) + "-" + str(int(__import__("time").time())),
-        "name": (display_name or "Pote")[:40],
-        "text": (text or "")[:2000],
-        "ts": __import__("time").strftime("%Y-%m-%dT%H:%M:%SZ", __import__("time").gmtime()),
-    }
+    text = (text or "").strip()[:2000]
     compact = compact_outing(outing) if outing else None
+    if not text and not compact:
+        raise ValueError("Message vide")
+    msg = {
+        "id": secrets.token_hex(6),
+        "name": (display_name or "Pote")[:40],
+        "text": text,
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
     if compact:
         msg["outing"] = compact
-    chat.append(msg)
-    filters["chat"] = chat[-80:]
-    return save_group_filters(group, filters)
+
+    def change(filters):
+        filters["chat"] = (list(filters.get("chat") or []) + [msg])[-80:]
+        return filters
+
+    return update_group(code, change)
 
 
 def set_group_poll(code, display_name, outings):
-    group = get_group(code)
-    if not group:
-        raise ValueError("Groupe introuvable")
     options = []
     seen = set()
     for row in outings or []:
@@ -1831,42 +1953,38 @@ def set_group_poll(code, display_name, outings):
             break
     if len(options) < 2:
         raise ValueError("Il faut au moins 2 sorties pour voter")
-    filters = group_filters(group)
-    filters["poll"] = {
-        "options": options,
-        "ts": __import__("time").strftime("%Y-%m-%dT%H:%M:%SZ", __import__("time").gmtime()),
-    }
-    filters["votes"] = {}
-    chat = list(filters.get("chat") or [])
-    chat.append({
-        "id": str(len(chat) + 1) + "-poll",
-        "name": (display_name or "Pote")[:40],
-        "text": "Votez pour une sortie : " + " · ".join(o["name"] for o in options),
-        "ts": filters["poll"]["ts"],
-    })
-    filters["chat"] = chat[-80:]
-    return save_group_filters(group, filters)
+    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    def change(filters):
+        filters["poll"] = {"options": options, "ts": ts}
+        filters["votes"] = {}
+        chat = list(filters.get("chat") or [])
+        chat.append({
+            "id": secrets.token_hex(6),
+            "name": (display_name or "Pote")[:40],
+            "text": "Votez pour une sortie : " + " · ".join(o["name"] for o in options),
+            "ts": ts,
+        })
+        filters["chat"] = chat[-80:]
+        return filters
+
+    return update_group(code, change)
 
 
 def vote_group(code, display_name, voter_id, outing_id):
-    group = get_group(code)
-    if not group:
-        raise ValueError("Groupe introuvable")
-    filters = group_filters(group)
-    poll = filters.get("poll") or {}
-    options = poll.get("options") or []
-    allowed = {str(o.get("id")) for o in options if o.get("id")}
     outing_id = str(outing_id or "")
-    if outing_id not in allowed:
-        raise ValueError("Cette sortie n’est pas dans le vote")
     voter_id = (voter_id or "").strip()[:64] or (display_name or "pote").strip()[:40]
-    votes = dict(filters.get("votes") or {})
-    votes[voter_id] = {
-        "name": (display_name or "Pote")[:40],
-        "outing_id": outing_id,
-    }
-    filters["votes"] = votes
-    return save_group_filters(group, filters)
+
+    def change(filters):
+        allowed = {str(o.get("id")) for o in ((filters.get("poll") or {}).get("options") or []) if o.get("id")}
+        if outing_id not in allowed:
+            raise ValueError("Cette sortie n’est pas dans le vote")
+        votes = dict(filters.get("votes") or {})
+        votes[voter_id] = {"name": (display_name or "Pote")[:40], "outing_id": outing_id}
+        filters["votes"] = votes
+        return filters
+
+    return update_group(code, change)
 
 
 def gotrue(method, path, body=None, bearer=None, timeout=12):
@@ -1919,7 +2037,7 @@ def public_user(user, phone=""):
     email = normalize_email(user.get("email") or "")
     meta = user.get("user_metadata") or {}
     ents = sinki_billing.entitlements_for_user(user)
-    plan = "plus" if sinki_billing.plus_active(user) else (meta.get("plan") or "free")
+    plan = "plus" if sinki_billing.plus_active(user) else "free"
     return {
         "id": user.get("id"),
         "email": email,
@@ -1972,8 +2090,17 @@ def running_on_render():
     return bool(os.environ.get("RENDER") or os.environ.get("RENDER_SERVICE_ID"))
 
 
+def has_brevo_key():
+    return bool((os.environ.get("BREVO_API_KEY") or "").strip())
+
+
 def has_resend_key():
-    return bool((os.environ.get("RESEND_API_KEY") or "").strip())
+    """True when an HTTPS mail API is configured (Brevo or Resend).
+
+    Render blocks SMTP, so codes must go through an HTTP API. Brevo's free plan
+    (300 mails/day) works with a verified sender address and no domain.
+    """
+    return has_brevo_key() or bool((os.environ.get("RESEND_API_KEY") or "").strip())
 
 
 def has_smtp():
@@ -1985,6 +2112,8 @@ def has_smtp():
 
 
 def supabase_mail_ready():
+    if (os.environ.get("SINKI_AUTH_STORE") or "").strip().lower() == "file":
+        return False  # local test mode: never touch real Supabase Auth users
     return bool((os.environ.get("SUPABASE_URL") or "").strip() and (os.environ.get("SUPABASE_SERVICE_ROLE") or "").strip())
 
 
@@ -1994,9 +2123,16 @@ def can_send_support_mail():
     return (not running_on_render()) and (has_smtp() or sys.platform == "darwin")
 
 
+def uses_resend_test_sender():
+    return _mail_from_address(RESEND_SAFE_FROM).lower().endswith("@resend.dev")
+
+
 def mail_health():
     return {
         "resend": has_resend_key(),
+        # onboarding@resend.dev only delivers to the Resend account owner.
+        "brevo": has_brevo_key(),
+        "resend_test_sender": has_resend_key() and not has_brevo_key() and uses_resend_test_sender(),
         "supabase": supabase_mail_ready(),
         "smtp": has_smtp() and not running_on_render(),
         "macos": sys.platform == "darwin" and not running_on_render(),
@@ -2332,10 +2468,34 @@ def send_event_moderation_mail(ev, origin=""):
         approve,
         reject,
     )
+    subject = "Sinki — événement à valider"
     try:
-        return send_macos_notice(to, "Sinki — événement à valider", plain)
-    except Exception:
+        if has_resend_key():
+            html = "<pre style=\"white-space:pre-wrap\">%s</pre>" % plain.replace("&", "&amp;").replace("<", "&lt;")
+            return send_resend_message(to, subject, html, plain)
+        if running_on_render():
+            print("event_moderation_mail_skipped no_resend", flush=True)
+            return False
+        return send_macos_notice(to, subject, plain)
+    except Exception as exc:
+        print("event_moderation_mail_fail %s" % type(exc).__name__, flush=True)
         return False
+
+
+def dev_mail_console():
+    """SINKI_MAIL_DEV=console: print codes in the local terminal instead of mailing."""
+    return (os.environ.get("SINKI_MAIL_DEV") or "").strip().lower() == "console" and not running_on_render()
+
+
+def events_enabled():
+    """Render's disk is wiped on every restart: organizer events are only open
+    there when they are stored in Supabase (events.durable())."""
+    if (os.environ.get("SINKI_EVENTS_ENABLED") or "").strip() == "1":
+        return True
+    return event_store.durable() or not running_on_render()
+
+
+EVENTS_OFF = "La publication d’événements n’est pas encore ouverte. Écris-nous à %s pour annoncer le tien." % SUPPORT_TO
 
 
 def mail_unconfigured_error(extra=""):
@@ -2348,6 +2508,9 @@ def send_sinki_mail(to, code, channels=None):
             channels = ["resend"] if has_resend_key() else []
         else:
             channels = ["resend", "smtp", "macos"]
+    if dev_mail_console():
+        print("DEV MAIL (local only) code=%s" % code, flush=True)
+        return True, ""
     errors = []
     for channel in channels:
         try:
@@ -2365,7 +2528,44 @@ def send_sinki_mail(to, code, channels=None):
     return False, " ".join(errors).strip()
 
 
+def send_brevo_message(to, subject, html, text, reply_to="", timeout=MAIL_TIMEOUT):
+    sender = _mail_from_address("thesinkiisinki@gmail.com")
+    body = {
+        "sender": {"name": "SINKI", "email": sender},
+        "to": [{"email": to}],
+        "subject": subject,
+        "htmlContent": html,
+        "textContent": text,
+    }
+    if reply_to:
+        body["replyTo"] = {"email": reply_to}
+    req = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "api-key": (os.environ.get("BREVO_API_KEY") or "").strip(),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp.read()
+    except urllib.error.HTTPError as exc:
+        payload, raw = http_error_body(exc)
+        print(
+            "brevo_fail status=%s code=%s msg=%s"
+            % (exc.code, payload.get("code") or "-", str(payload.get("message") or raw)[:160]),
+            flush=True,
+        )
+        raise ValueError(SEND_FAILED)
+    return True
+
+
 def send_resend_message(to, subject, html, text, reply_to="", timeout=MAIL_TIMEOUT):
+    if has_brevo_key():
+        return send_brevo_message(to, subject, html, text, reply_to, timeout)
     key = (os.environ.get("RESEND_API_KEY") or "").strip()
     if not key:
         return False
@@ -2388,7 +2588,13 @@ def send_resend_message(to, subject, html, text, reply_to="", timeout=MAIL_TIMEO
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             resp.read()
-    except urllib.error.HTTPError:
+    except urllib.error.HTTPError as exc:
+        payload, raw = http_error_body(exc)
+        print(
+            "resend_fail status=%s name=%s msg=%s from_test_sender=%s"
+            % (exc.code, payload.get("name") or "-", str(payload.get("message") or raw)[:160], uses_resend_test_sender()),
+            flush=True,
+        )
         raise ValueError(SEND_FAILED)
     return True
 
@@ -2442,21 +2648,36 @@ def log_auth_send_ok(channel, exists=False, in_auth=False, mode=""):
     )
 
 
+def gotrue_find_user(email):
+    """Supabase Auth user dict, {} if absent. Raises on lookup failure.
+
+    The old version only read the first 200 users, so later accounts looked
+    "unknown" and got the wrong signup/login message.
+    """
+    email = normalize_email(email)
+    if not email:
+        return {}
+    page = 1
+    while page <= 50:
+        data = gotrue("GET", "/admin/users?page=%d&per_page=1000" % page)
+        users = data.get("users") or []
+        for user in users:
+            if normalize_email((user or {}).get("email")) == email:
+                return user
+        if len(users) < 1000:
+            return {}
+        page += 1
+    return {}
+
+
 def gotrue_user_exists(email):
     """True / False / None (lookup failed). Never logs the email."""
     if not supabase_mail_ready():
         return None
-    email = normalize_email(email)
-    if not email:
-        return False
     try:
-        data = gotrue("GET", "/admin/users?page=1&per_page=200")
+        return bool(gotrue_find_user(email))
     except Exception:
         return None
-    for user in data.get("users") or []:
-        if normalize_email((user or {}).get("email")) == email:
-            return True
-    return False
 
 
 class AuthMailError(ValueError):
@@ -2546,9 +2767,10 @@ def send_login_code(body, host_header=""):
 
     # No Resend: GoTrue must deliver (Render has no SMTP / Mail.app).
     if supabase_mail_ready():
+        # Mark first: if the store is down we must not mail a code nobody can verify.
+        local_auth.mark_pending_external(email, "gotrue", profile)
         try:
             send_gotrue_otp(email, create_user=(in_auth is not True))
-            local_auth.mark_pending_external(email, "gotrue")
             local_auth.record_otp_send(email)
             log_auth_send_ok("gotrue", exists=exists, in_auth=in_auth, mode=mode)
             return {"ok": True, "email_note": note}
@@ -3051,6 +3273,12 @@ def purge_signed_in_user(user):
         pass
     local_auth.delete_account(email)
     try:
+        auth_user = gotrue_find_user(email) if supabase_mail_ready() else {}
+        if auth_user.get("id"):
+            gotrue("DELETE", "/admin/users/" + urllib.parse.quote(str(auth_user["id"])))
+    except Exception as exc:
+        print("delete_account auth_user_fail %s" % type(exc).__name__, flush=True)
+    try:
         members = supabase_select(
             "group_members?member_token=eq." + urllib.parse.quote(str(uid)) + "&select=id"
         )
@@ -3267,6 +3495,28 @@ def sync_account(user, bearer, body):
     return account_payload(fresh, bearer)
 
 
+# Only these files are public. Everything else in web/ (Python sources, stores.json,
+# vendored packages) used to be downloadable by anyone.
+STATIC_FILES = {
+    "/index.html", "/download.html", "/privacy.html", "/delete-account.html", "/flyer.html",
+    "/app.js", "/i18n.js", "/catalog.js", "/billing.js", "/styles.css",
+    "/favicon.svg", "/biche-sinki.png", "/flyer-qr.png", "/flyer-qr.svg",
+}
+STATIC_DIRS = ("/biche/", "/icons/", "/public/")
+# Origins of the bundled iOS / Android app (Capacitor WebView).
+NATIVE_ORIGINS = {"capacitor://localhost", "https://localhost", "http://localhost", "ionic://localhost"}
+STATIC_EXT = (".png", ".jpg", ".jpeg", ".svg", ".webp", ".webmanifest")
+
+
+def static_allowed(path):
+    path = urllib.parse.unquote(path or "")
+    if ".." in path:
+        return False
+    if path in STATIC_FILES:
+        return True
+    return path.startswith(STATIC_DIRS) and path.lower().endswith(STATIC_EXT) and path.count("/") == 2
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=ROOT, **kwargs)
@@ -3315,7 +3565,29 @@ class Handler(SimpleHTTPRequestHandler):
             self.path = "/delete-account.html"
         elif path_only in ("/flyer", "/flyer-print"):
             self.path = "/flyer.html"
+        if not static_allowed(urllib.parse.urlparse(self.path).path):
+            self.send_error(404)
+            return
         return super().do_GET()
+
+    def do_OPTIONS(self):
+        """CORS preflight for the Capacitor apps (Authorization header)."""
+        if not self.path.startswith("/api/") or (self.headers.get("Origin") or "").strip() not in NATIVE_ORIGINS:
+            self.send_error(404)
+            return
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_HEAD(self):
+        path = urllib.parse.urlparse(self.path).path
+        if path != "/" and not static_allowed(path):
+            self.send_error(404)
+            return
+        return super().do_HEAD()
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -3353,6 +3625,10 @@ class Handler(SimpleHTTPRequestHandler):
         return proto + "://" + host
 
     def end_headers(self):
+        origin = (self.headers.get("Origin") or "").strip()
+        if self.path.startswith("/api/") and origin in NATIVE_ORIGINS:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         if not self.path.startswith("/api/"):
             self.send_header("Permissions-Policy", "geolocation=(self)")
             if (
@@ -3425,7 +3701,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 120, "mail": mail_health()}
+                payload = {"ok": True, "app": "sinki", "v": 121, "mail": mail_health(), "events": events_enabled()}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
@@ -3504,6 +3780,9 @@ class Handler(SimpleHTTPRequestHandler):
                 user = user_from_bearer(self.headers.get("Authorization"))
                 if not user:
                     self.send_json({"error": "non connecté"}, 401)
+                    return
+                if not events_enabled():
+                    self.send_json({"error": EVENTS_OFF}, 503)
                     return
                 row = event_store.create_event(user.get("email"), self.json_body())
                 send_event_moderation_mail(row, self.request_origin())
@@ -3584,6 +3863,8 @@ class Handler(SimpleHTTPRequestHandler):
                     self.send_json({"error": "non connecté"}, 401)
                     return
                 payload = purge_signed_in_user(user)
+            elif path == "/api/report" and post:
+                payload = report_group_message(self.json_body())
             elif path == "/api/groups/message" and post:
                 body = self.json_body()
                 payload = post_group_message(
@@ -3608,6 +3889,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             status = 404 if isinstance(payload, dict) and payload.get("error") == "introuvable" else 200
             self.send_json(payload, status)
+        except local_auth.StoreUnavailable as exc:
+            print("auth_store_unavailable %s" % exc, flush=True)
+            self.send_json({"error": local_auth.StoreUnavailable.public}, 503)
         except ValueError as exc:
             self.send_json({"error": str(exc)}, 400)
         except urllib.error.HTTPError as exc:

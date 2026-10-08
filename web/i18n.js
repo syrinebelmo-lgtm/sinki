@@ -103,6 +103,9 @@ fr: {
   pay_ok: "Achat confirmé.",
   pay_cancel: "Achat annulé.",
   pay_err: "Le paiement n’a pas abouti.",
+  chat_report: "Signaler", chat_block: "Bloquer", chat_report_ask: "Signaler ce message à l’équipe Sinki ?", chat_report_ok: "Merci, le message a été signalé. On regarde sous 24 h.", chat_report_err: "Signalement impossible. Écris-nous à thesinkiisinki@gmail.com.", chat_block_ask: "Ne plus voir les messages de cette personne sur cet appareil ?",
+  photo_by: "Photo :", fact_source: "Source",
+  pay_soon_free: "Aucun abonnement n’est en vente pour l’instant : toutes les fonctions de Sinki sont gratuites. Les offres payantes arriveront avec l’application iOS et Android.",
   pay_store_later: "L’App Store / Google Play n’est pas encore branché. Aucun prélèvement. Rien n’est activé tant que l’achat n’est pas confirmé.",
   pay_restore: "Restaurer mes achats",
   pay_restore_ok: "Achats restaurés (s’il y en a de confirmés).",
@@ -189,7 +192,7 @@ fr: {
   set_purchases_title: "Achats et abonnements",
   set_purchases_lead: "Rien n’est encaissé via Apple ou Google pour l’instant.",
   set_legal_title: "Mentions légales",
-  legal_privacy: `Responsable : Sinki, contact bonjour@sinki.app. Sinki est une application web (PWA) pour proposer des sorties existantes à tout le monde, sans inventer d’activités, de photos ni de prix.
+  legal_privacy: `Responsable : Sinki, contact thesinkiisinki@gmail.com. Sinki est une application web (PWA) pour proposer des sorties existantes à tout le monde, sans inventer d’activités, de photos ni de prix.
 
 Compte : email, prénom, nom, pseudo, photo de profil éventuelle, jeton de session. Connexion par code à 6 chiffres envoyé par email (Resend, SMTP ou Mail.app selon le serveur). Pas de mot de passe.
 
@@ -207,11 +210,11 @@ Mails : codes de connexion, et parfois un mail interne au modérateur pour un é
 
 Durées : le compte et les événements tant que tu ne les supprimes pas (ou qu’ils sont refusés / expirés). Les codes OTP sont temporaires.
 
-Tes droits : accès, rectification (profil), opposition (ne pas activer le GPS, changer le pays), effacement via « Supprimer mon compte ». Écris à bonjour@sinki.app.
+Tes droits : accès, rectification (profil), opposition (ne pas activer le GPS, changer le pays), effacement via « Supprimer mon compte ». Écris à thesinkiisinki@gmail.com.
 
 Sinki est ouvert à tous. Pas de SDK publicitaire ni d’outil d’analytics tiers dans l’app actuelle.
 
-Page publique : https://sinki.onrender.com/privacy. Suppression hors de l’app : https://sinki.onrender.com/delete ou bonjour@sinki.app.
+Page publique : https://sinki.onrender.com/privacy. Suppression hors de l’app : https://sinki.onrender.com/delete ou thesinkiisinki@gmail.com.
 
 Cette notice décrit le produit tel qu’il existe aujourd’hui. Elle sera mise à jour si des stores, paiements ou SDK sont ajoutés.`,
   legal_terms: `Sinki est ouvert à tous.
@@ -226,17 +229,17 @@ Le compte se crée avec un email. Se déconnecter ne supprime pas le compte. La 
 
 Sinki est fourni « en l’état ». Les disponibilités, horaires et prix des lieux peuvent changer chez les organisateurs ou établissements.
 
-Le droit applicable est celui du responsable indiqué dans les mentions légales. Contact : bonjour@sinki.app.`,
+Le droit applicable est celui du responsable indiqué dans les mentions légales. Contact : thesinkiisinki@gmail.com.`,
   legal_purchases: `Sinki Plus (2,99 / 9,99 / 99,99 € : international et sorties illimitées), Sorties illimitées (1,99 / 7,99 / 89,99 € : sans plafond quotidien), Sinki sans pub (5,99 € paiement unique) et les événements (4,99 € publication + 24 h, puis 7,99 / 12,99 / 39,99 € de boost extra) sont les tarifs de référence. Les prix store (devise, reçus) s’afficheront dès que les achats App Store / Google Play seront branchés.
 
 Rien n’est activé sans confirmation d’achat. Restauration des achats prévue. Un même abonnement déjà actif ne se rachète pas.
 
-Les règles Apple ou Google s’appliqueront pour le renouvellement et l’annulation. Contact : bonjour@sinki.app.`,
+Les règles Apple ou Google s’appliqueront pour le renouvellement et l’annulation. Contact : thesinkiisinki@gmail.com.`,
   legal_mentions: `Sinki — application web « on fait quoi entre potes ? »
 
 Public : ouvert à tous.
 
-Contact : bonjour@sinki.app
+Contact : thesinkiisinki@gmail.com
 
 Hébergement : Render (offre gratuite, l’app s’endort après 15 min sans visite) ou le serveur local. Catalogue / groupes : Supabase si les clés sont présentes.
 
@@ -249,7 +252,7 @@ Droit applicable : France, sauf mention contraire.`,
   account_delete: "Supprimer mon compte",
   account_delete_yes: "Oui, tout effacer",
   account_delete_confirm: "Définitif : compte, avatar, tes événements, tes likes et commentaires. Les favoris et le groupe sur cet appareil aussi.",
-  account_delete_err: "La suppression a échoué. Réessaie ou écris à bonjour@sinki.app.",
+  account_delete_err: "La suppression a échoué. Réessaie ou écris à thesinkiisinki@gmail.com.",
   set_about_title: "À propos",
   set_about_lead: "Sinki, c’est « on fait quoi entre potes ? » — la biche, zéro invention de sorties.",
   set_notifs_title: "Notifications",
@@ -450,6 +453,9 @@ en: {
   pay_ok: "Purchase confirmed.",
   pay_cancel: "Purchase cancelled.",
   pay_err: "Payment didn’t go through.",
+  chat_report: "Report", chat_block: "Block", chat_report_ask: "Report this message to the Sinki team?", chat_report_ok: "Thanks, the message was reported. We review within 24 h.", chat_report_err: "Could not report. Email thesinkiisinki@gmail.com.", chat_block_ask: "Hide this person’s messages on this device?",
+  photo_by: "Photo:", fact_source: "Source",
+  pay_soon_free: "Nothing is on sale yet: every Sinki feature is free for now. Paid plans will come with the iOS and Android app.",
   pay_store_later: "App Store / Google Play isn’t connected yet. Nothing is charged. Nothing is unlocked until a purchase is confirmed.",
   pay_restore: "Restore purchases",
   pay_restore_ok: "Purchases restored (if any were confirmed).",
@@ -536,7 +542,7 @@ en: {
   set_purchases_title: "Purchases & subscriptions",
   set_purchases_lead: "Nothing is charged through Apple or Google yet.",
   set_legal_title: "Legal notice",
-  legal_privacy: `Controller: Sinki, contact bonjour@sinki.app. Sinki is a web app (PWA) that suggests existing outings for everyone, without inventing activities, photos, or prices.
+  legal_privacy: `Controller: Sinki, contact thesinkiisinki@gmail.com. Sinki is a web app (PWA) that suggests existing outings for everyone, without inventing activities, photos, or prices.
 
 Account data: email, first name, last name, username, optional profile photo, session token. Sign-in uses a 6-digit email code (Resend, SMTP, or Mail.app depending on the server). No password.
 
@@ -554,11 +560,11 @@ Email: login codes, and sometimes an internal mail to the moderator for an event
 
 Retention: account and events until you delete them (or they are rejected / expire). OTP codes are short-lived.
 
-Your rights: access, correction (profile), objection (don’t use GPS, change country), erasure via “Delete my account”. Write to bonjour@sinki.app.
+Your rights: access, correction (profile), objection (don’t use GPS, change country), erasure via “Delete my account”. Write to thesinkiisinki@gmail.com.
 
 Sinki is open to everyone. No ad SDK and no third-party analytics SDK in the current app.
 
-Public page: https://sinki.onrender.com/privacy. Deletion without the app: https://sinki.onrender.com/delete or bonjour@sinki.app.
+Public page: https://sinki.onrender.com/privacy. Deletion without the app: https://sinki.onrender.com/delete or thesinkiisinki@gmail.com.
 
 This notice describes the product as it exists today. It will be updated if stores, payments, or SDKs are added.`,
   legal_terms: `Sinki is open to everyone.
@@ -573,17 +579,17 @@ Accounts are created with an email. Logging out does not delete the account. Per
 
 Sinki is provided as-is. Opening hours and prices can change at the venue.
 
-Governing law is that of the controller in the legal notice. Contact: bonjour@sinki.app.`,
+Governing law is that of the controller in the legal notice. Contact: thesinkiisinki@gmail.com.`,
   legal_purchases: `Sinki Plus (€2.99 / €9.99 / €99.99: international and unlimited outings), Unlimited outings (€1.99 / €7.99 / €89.99: no daily cap), Sinki ad-free (€5.99 one-time) and events (€4.99 publish + 24h, then €7.99 / €12.99 / €39.99 extra boost) are list prices. Store prices (currency, receipts) show once App Store / Google Play IAP is connected.
 
 Nothing is unlocked without a confirmed purchase. Restore is available. The same active plan cannot be bought twice.
 
-Apple or Google rules will apply for renewal and cancellation. Contact: bonjour@sinki.app.`,
+Apple or Google rules will apply for renewal and cancellation. Contact: thesinkiisinki@gmail.com.`,
   legal_mentions: `Sinki — web app “what are we doing with friends?”
 
 Audience: everyone.
 
-Contact: bonjour@sinki.app
+Contact: thesinkiisinki@gmail.com
 
 Hosting: Render (free plan; the app sleeps after 15 minutes idle) or the local server. Catalog / groups: Supabase if keys are present.
 
@@ -596,7 +602,7 @@ Governing law: France, unless stated otherwise.`,
   account_delete: "Delete my account",
   account_delete_yes: "Yes, erase everything",
   account_delete_confirm: "Permanent: account, avatar, your events, your likes and comments. Favorites and group on this device too.",
-  account_delete_err: "Deletion failed. Try again or write to bonjour@sinki.app.",
+  account_delete_err: "Deletion failed. Try again or write to thesinkiisinki@gmail.com.",
   set_about_title: "About",
   set_about_lead: "Sinki is “what are we doing with friends?” — the deer, no invented outings.",
   set_notifs_title: "Notifications",

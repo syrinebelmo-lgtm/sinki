@@ -1,4 +1,19 @@
 const $ = (sel, root = document) => root.querySelector(sel);
+
+// In the iOS/Android app (Capacitor) the pages are bundled on the phone and
+// SINKI_API_BASE points to the live server; on the website it stays "".
+const API_BASE = String(window.SINKI_API_BASE || "").replace(/\/$/, "");
+if (API_BASE) {
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (url, opts) => nativeFetch(typeof url === "string" && url.startsWith("/api/") ? API_BASE + url : url, opts);
+}
+function assetUrl(url) {
+  const u = String(url || "");
+  return API_BASE && /^\/(avatars|event-photos)\//.test(u) ? API_BASE + u : u;
+}
+function publicOrigin() {
+  return API_BASE || location.origin;
+}
 const app = $("#app");
 
 const RADII = [5, 15, 30];
@@ -42,7 +57,7 @@ function typeList() {
   return [
     ["all", "✨ " + t("type_all")],
     ["activites", "🎳 " + t("type_act")],
-    ["evenements", "🎪 " + t("type_evt")],
+    // "Événements" hidden: catalogue events have no dates yet (see live_events_filter in serve.py).
     ["restaurants", "☕ " + t("type_rest")],
     ["shopping", "🛍️ " + t("type_shop")],
     ["randonnee", "🥾 " + t("type_hike")],
@@ -217,6 +232,13 @@ function hasPlus() {
 function hasUnlimited() {
   return Boolean(liveEnt("unlimited")) || hasPlus();
 }
+// Paid limits only make sense once a real store purchase is possible (native
+// StoreKit / Play bridge). Without it, the 6-a-day cap trapped people behind a
+// paywall nobody could pay, and "Sinki me propose" kept showing the same card.
+function billingAvailable() {
+  const iap = window.SinkiIAP;
+  return Boolean(iap && typeof iap.purchase === "function");
+}
 function hasNoAds() {
   return Boolean(liveEnt("no_ads"));
 }
@@ -231,7 +253,7 @@ function loadQuota() {
   return { day, ids: q.ids };
 }
 function remainingToday() {
-  if (hasUnlimited()) return Infinity;
+  if (hasUnlimited() || !billingAvailable()) return Infinity;
   return Math.max(0, FREE_DAY_CAP - loadQuota().ids.length);
 }
 function quotaBlocked() {
@@ -245,7 +267,7 @@ function currentPlanLabel() {
   return bits.length ? bits.join(" · ") : t("set_plan_free");
 }
 function quotaStatusHtml() {
-  if (hasUnlimited()) return "";
+  if (hasUnlimited() || !billingAvailable()) return "";
   if (quotaBlocked()) {
     if (!state.payFamily) state.payFamily = "plus";
     return `<div class="account-card quota-limit">
@@ -257,7 +279,7 @@ function quotaStatusHtml() {
   return `<p class="hint">${t("quota_left", { n: remainingToday(), max: FREE_DAY_CAP })}</p>`;
 }
 function recordFound(rows) {
-  if (hasUnlimited()) return rows || [];
+  if (hasUnlimited() || !billingAvailable()) return rows || [];
   const q = loadQuota();
   const out = [];
   (rows || []).forEach((row) => {
@@ -279,7 +301,7 @@ function askQuota() {
   return true;
 }
 function askPlus(reason) {
-  if (hasPlus()) return false;
+  if (hasPlus() || !billingAvailable()) return false;
   openPaywall(reason || "world");
   return true;
 }
@@ -369,6 +391,7 @@ function buySubBtn(family) {
   return `<button class="btn" data-act="pay-buy" data-id="${escapeHtml(prod.id)}" ${busy || state.billingBusy ? "disabled" : ""}>${busy ? t("pay_loading") : t("pay_buy")}</button>`;
 }
 function tariffsBody() {
+  if (!billingAvailable()) return `<p class="hint">${t("pay_soon_free")}</p>`;
   const fam = state.payFamily || "plus";
   const hint = state.billingHint ? `<p class="${/ok|actif/i.test(state.billingHint) || state.billingHint === t("pay_ok") ? "hint" : "empty"}">${escapeHtml(state.billingHint)}</p>` : "";
   const tabs = `<div class="row">
@@ -785,7 +808,7 @@ function safeHttpUrl(raw) {
 }
 function cardHtml(item, mode) {
   const cover = item.photo_url
-    ? `<div class="cover" style="background-image:url('${String(item.photo_url).replace(/'/g, "%27")}')">`
+    ? `<div class="cover" style="background-image:url('${assetUrl(item.photo_url).replace(/'/g, "%27")}')">`
     : `<div class="cover empty">🦌`;
   const why = mode === "guided"
         ? `<div class="why">${t("why")} ${item.category === "Shopping" || state.type === "shopping" ? t("why_shop") : state.type === "randonnee" ? t("why_hike") : state.unlimited ? t("why_unlim") : t("why_budget", { n: state.budget })} · ${t("why_people", { n: state.people, who: state.people > 1 ? t("persons") : t("person") })}${item.distance_km != null ? " · " + item.distance_km + " km" : ""}${item.photo_url ? "" : " · " + t("why_nophoto")}</div>`
@@ -1141,14 +1164,25 @@ function mapsPlaceUrl(d) {
   if (d.latitude == null || d.longitude == null) return "";
   return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(d.latitude + "," + d.longitude);
 }
+// Commons licences (CC-BY, CC-BY-SA) require author + licence next to the photo.
+function photoCreditHtml(d) {
+  const url = String(d.photo_url || "");
+  if (!/wikimedia\.org|wikipedia\.org/i.test(url)) return "";
+  const file = url.split("?")[0].split("/").pop();
+  const page = "https://commons.wikimedia.org/wiki/File:" + file;
+  const who = d.photo_credit ? escapeHtml(String(d.photo_credit).replace(/<[^>]*>/g, "").slice(0, 80)) : "Wikimedia Commons";
+  const lic = d.photo_license ? " · " + escapeHtml(String(d.photo_license).slice(0, 40)) : "";
+  return `<p class="hint photo-credit">${t("photo_by")} <a href="${escapeHtml(page)}" target="_blank" rel="noreferrer">${who}</a>${lic}</p>`;
+}
 function detailSheetHtml(d) {
   const cover = d.photo_url
-    ? `<div class="sheet-cover" style="background-image:url('${String(d.photo_url).replace(/'/g, "%27")}')"></div>`
+    ? `<div class="sheet-cover" style="background-image:url('${assetUrl(d.photo_url).replace(/'/g, "%27")}')"></div>`
     : `<div class="sheet-cover empty">🦌</div>`;
-  const site = d.website_url || d.source_url;
+  const site = safeHttpUrl(d.website_url || d.source_url);
   const mapUrl = mapsPlaceUrl(d);
   return `<div class="sheet"><div class="sheet-bg" data-act="close-sheet"></div><div class="sheet-card">
       ${cover}
+      ${photoCreditHtml(d)}
       <div class="cat">${escapeHtml(d.category || t("outing"))}</div>
       <h1 style="font-size:30px">${escapeHtml(d.name || t("outing"))}</h1>
       <p class="meta">${priceLabel(d)}</p>
@@ -1162,12 +1196,13 @@ function detailSheetHtml(d) {
         ${factRow(t("fact_in"), indoorLabel(d.indoor))}
         ${factRow(t("fact_addr"), d.address)}
         ${factRow(t("fact_dist"), d.distance_km != null ? d.distance_km + " km" : "")}
+        ${factRow(t("fact_source"), sourceLabel(d.source_name))}
         ${bringNote(d) ? factRow(t("fact_bring"), bringNote(d)) : ""}
       </dl>
       ${isEventItem(d) ? eventCommentsHtml(d) : ""}
       ${routePanel()}
       ${mapUrl ? `<a class="btn outline" href="${mapUrl}" target="_blank" rel="noreferrer">${t("see_map")}</a>` : ""}
-      ${site ? `<a class="btn outline" href="${site}" target="_blank" rel="noreferrer">${t("site")}</a>` : ""}
+      ${site ? `<a class="btn outline" href="${escapeHtml(site)}" target="_blank" rel="noreferrer">${t("site")}</a>` : ""}
       <button class="btn sand" data-act="plan">📅 ${t("add_plan")}</button>
       <button class="btn secondary" data-act="send-detail-group">${t("send_detail")}</button>
       <button class="ghost" data-act="close-sheet">${t("close")}</button>
@@ -1227,6 +1262,9 @@ function voterId() {
   }
   return id;
 }
+function blockedNames() {
+  try { return loadObj("sinki-blocked") || []; } catch { return []; }
+}
 function applyGroupState(g) {
   if (!g || g.error) return;
   state.groupCode = g.share_code || state.groupCode;
@@ -1271,7 +1309,29 @@ function pollHtml() {
 }
 function voteShareText(code, options) {
   const lines = (options || []).map((r, i) => (i + 1) + ". " + decodeText(r.name) + " — " + priceLabel(r));
-  return t("share_vote", { code }) + lines.join("\n");
+  return t("share_vote", { code }) + lines.join("\n") + "\n\n" + groupInviteUrl(code);
+}
+function groupInviteUrl(code) {
+  return publicOrigin() + "/?groupe=" + encodeURIComponent(code);
+}
+// Invite links (?groupe=CODE) open the group directly.
+async function joinGroupFromLink() {
+  const params = new URLSearchParams(location.search);
+  const code = (params.get("groupe") || "").trim().toUpperCase();
+  if (!code) return;
+  params.delete("groupe");
+  history.replaceState(null, "", location.pathname + (params.toString() ? "?" + params : "") + location.hash);
+  try {
+    const r = await fetch("/api/groups?code=" + encodeURIComponent(code));
+    const g = await r.json();
+    if (!r.ok || g.error) { alert(t("err_code")); return; }
+    applyGroupState(g);
+    state.screen = "group";
+    render();
+    persistAccount();
+  } catch {
+    alert(t("err_code"));
+  }
 }
 async function copyText(text) {
   try {
@@ -1330,7 +1390,7 @@ function validPseudo(v) {
 }
 function avatarHtml(acc, cls) {
   const url = acc && acc.avatar_url;
-  if (url) return `<img class="${cls}" src="${escapeHtml(url)}" alt="" />`;
+  if (url) return `<img class="${cls}" src="${escapeHtml(assetUrl(url))}" alt="" />`;
   const letter = ((acc && (acc.nick || acc.first_name || acc.email)) || "?").trim().charAt(0).toUpperCase();
   return `<span class="${cls} avatar-letter">${escapeHtml(letter)}</span>`;
 }
@@ -1435,7 +1495,7 @@ function settingsPage() {
       ${mascot("emerveillee", t("pay_catalog_lead"))}
       <div class="account-card">
         <p class="hint" style="margin-top:0"><strong>${t("set_plan_free")}</strong>${hasPlus() || hasUnlimited() ? "" : " · " + t("set_plan_current")}</p>
-        <p class="hint">${t("set_plan_free_lead", { country: home, n: FREE_DAY_CAP })}</p>
+        ${billingAvailable() ? `<p class="hint">${t("set_plan_free_lead", { country: home, n: FREE_DAY_CAP })}</p>` : ""}
       </div>
       ${hasPlus() ? `<p class="hint">${t("set_plan_plus_on")}</p>` : ""}
       ${tariffsBody()}
@@ -1457,7 +1517,7 @@ function settingsPage() {
       <h1>${t("ev_title")}</h1>
       ${state.profileHint ? `<p class="hint">${escapeHtml(state.profileHint)}</p>` : ""}
       ${queue.length ? `<h2 class="section">${t("ev_queue")}</h2>${queue.map((ev) => `<div class="account-card">
-        ${ev.photo_url ? `<img class="avatar" src="${escapeHtml(ev.photo_url)}" alt="" />` : ""}
+        ${ev.photo_url ? `<img class="avatar" src="${escapeHtml(assetUrl(ev.photo_url))}" alt="" />` : ""}
         <p class="hint" style="margin-top:8px"><strong>${escapeHtml(ev.name)}</strong></p>
         <p class="hint">${escapeHtml(ev.address || "")}</p>
         <p class="hint">${escapeHtml(ev.description || "")}</p>
@@ -1743,6 +1803,7 @@ function pickThree(list, vibe) {
     if (vibe === "fun" && (o.kind === "restaurant" || (o.category || "").includes("loisirs"))) s += 3;
     if ((vibe === "party" || vibe === "fun") && o.kind === "event" && (o.category || "") === "Soirées et concerts") s += 4;
     if ((vibe === "party" || state.type === "soirees") && isNightlifeItem(o)) s += 12;
+    if (state.moment === "evening" && isNightlifeItem(o)) s += 6;
     return s;
   }
   function nameKey(n) {
@@ -2074,7 +2135,8 @@ function render() {
   } else if (state.screen === "favs") {
     body = `<div class="page has-nav"><h1>${t("favs_title")}</h1>${state.favs.length ? mascot("emerveillee", t("favs_full")) + state.favs.map((item) => cardHtml(item, "fav")).join("") : mascot("emerveillee", t("favs_empty"))}${navHtml("favs")}</div>`;
   } else if (state.screen === "group") {
-    const chat = state.groupChat.map((m) => `<div class="bubble"><div class="who">${escapeHtml(m.name)}</div>${escapeHtml(m.text || "")}${m.outing ? `<button class="share-card" data-detail="${escapeHtml(String(m.outing.id || ""))}">${escapeHtml(m.outing.name)} · ${priceLabel(m.outing)} · ${t("see_all")}</button>` : ""}</div>`).join("");
+    const blocked = blockedNames();
+    const chat = state.groupChat.filter((m) => !blocked.includes(String(m.name || "").toLowerCase())).map((m) => `<div class="bubble"><div class="who">${escapeHtml(m.name)}${m.id && m.name !== chatDisplayName() ? ` <button class="linkish" data-act="chat-report" data-id="${escapeHtml(String(m.id))}">${t("chat_report")}</button> <button class="linkish" data-act="chat-block" data-id="${escapeHtml(String(m.name))}">${t("chat_block")}</button>` : ""}</div>${escapeHtml(m.text || "")}${m.outing ? `<button class="share-card" data-detail="${escapeHtml(String(m.outing.id || ""))}">${escapeHtml(m.outing.name)} · ${priceLabel(m.outing)} · ${t("see_all")}</button>` : ""}</div>`).join("");
     const autoNick = String((state.account && state.account.first_name) || "").trim();
     const nickField = autoNick
       ? `<p class="hint">${t("nick_auto", { name: autoNick })}</p>`
@@ -2310,7 +2372,7 @@ function bind() {
         });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) {
-          state.profileHint = data.error === "photo" ? t("set_photo_err") : t("ev_need_fields");
+          state.profileHint = r.status === 503 && data.error ? data.error : data.error === "photo" ? t("set_photo_err") : t("ev_need_fields");
           render();
           return;
         }
@@ -2571,6 +2633,24 @@ function bind() {
       applyGroupState(g);
       render();
       persistAccount();
+      return;
+    }
+    if (act === "chat-report") {
+      const msg = state.groupChat.find((m) => String(m.id) === el.dataset.id);
+      if (!msg || !confirm(t("chat_report_ask"))) return;
+      const r = await fetch("/api/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: state.groupCode, message_id: msg.id }),
+      }).catch(() => null);
+      alert(r && r.ok ? t("chat_report_ok") : t("chat_report_err"));
+      return;
+    }
+    if (act === "chat-block") {
+      const name = String(el.dataset.id || "").toLowerCase();
+      if (!name || !confirm(t("chat_block_ask"))) return;
+      save("sinki-blocked", [...new Set([...blockedNames(), name])]);
+      render();
       return;
     }
     if (act === "leave-group") {
@@ -3154,14 +3234,27 @@ async function sendGroupMessage(text, outing) {
   render();
 }
 
-async function refreshGroup() {
+async function refreshGroup(quiet) {
   if (!state.groupCode) return;
-  const r = await fetch("/api/groups?code=" + encodeURIComponent(state.groupCode));
-  if (!r.ok) { render(); return; }
+  const r = await fetch("/api/groups?code=" + encodeURIComponent(state.groupCode)).catch(() => null);
+  if (!r || !r.ok) { if (!quiet) render(); return; }
   const g = await r.json();
+  const before = JSON.stringify([state.groupChat, state.groupPoll, state.groupVotes]);
   applyGroupState(g);
+  if (quiet && before === JSON.stringify([state.groupChat, state.groupPoll, state.groupVotes])) return;
+  // Keep what the person is typing across the re-render.
+  const box = $("#chatmsg");
+  const draft = box ? box.value : "";
+  const focused = box && document.activeElement === box;
   render();
+  const again = $("#chatmsg");
+  if (again && draft) again.value = draft;
+  if (again && focused) again.focus();
 }
+// Friends' messages and votes appear without leaving the Group tab.
+setInterval(() => {
+  if (state.screen === "group" && state.groupCode && document.visibilityState === "visible") refreshGroup(true);
+}, 8000);
 
 async function shareAndVote() {
   const options = shareOptions();
@@ -3320,8 +3413,19 @@ function outingPriceEur(item) {
   const p = Number(item.price_min);
   return Number.isFinite(p) ? p : null;
 }
+// "Temps disponible" and "Moment" used to be asked but ignored by the search.
+const DURATION_MAX = { short: 150, half: 300 };
+function respectsTimeFilters(item) {
+  const max = DURATION_MAX[state.duration];
+  const minutes = Number(item.duration_minutes);
+  if (max && Number.isFinite(minutes) && minutes > max) return false;
+  // Clubs and bars are not a morning outing.
+  if (state.moment === "morning" && isNightlifeItem(item)) return false;
+  return true;
+}
 function respectsMandatoryFilters(item) {
   if (state.type && state.type !== "all" && !matchesType(item, state.type)) return false;
+  if (!respectsTimeFilters(item)) return false;
   if (state.indoor === "in" && item.indoor === false) return false;
   if (state.indoor === "out" && item.indoor === true) return false;
   if (!state.unlimited && !onlyType("shopping") && !onlyType("randonnee")) {
@@ -3874,12 +3978,13 @@ async function bootAccount() {
 }
 
 bootAccount().then(() => {
+  joinGroupFromLink();
   loadPublicEvents().then(render);
   loadOrganizerEvents();
   render();
 });
 applyHomeArea();
-if (!hasPlus() && state.exploreScope === "world") {
+if (billingAvailable() && !hasPlus() && state.exploreScope === "world") {
   state.exploreScope = "home";
   localStorage.setItem("sinki-explore-scope", "home");
 }

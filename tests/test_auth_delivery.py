@@ -23,7 +23,7 @@ class AuthDeliveryTests(unittest.TestCase):
             result = serve.send_login_code({"email": "new@example.com", "mode": "signup", "nick": "New"})
         self.assertTrue(result["ok"])
         send.assert_called_once_with("new@example.com", create_user=True)
-        pending.assert_called_once_with("new@example.com", "gotrue")
+        pending.assert_called_once_with("new@example.com", "gotrue", {"first_name": "", "last_name": "", "nick": "New"})
 
     def test_existing_login_does_not_create_auth_user(self):
         with patch.dict(os.environ, {"SUPABASE_URL": "https://example.supabase.co", "SUPABASE_SERVICE_ROLE": "test"}, clear=False), \
@@ -63,6 +63,7 @@ class AuthDeliveryTests(unittest.TestCase):
              patch.object(serve.local_auth, "email_has_account", return_value=True), \
              patch.object(serve, "gotrue_user_exists", return_value=True), \
              patch.object(serve, "send_supabase_otp_mail", side_effect=err), \
+             patch.object(serve.local_auth, "mark_pending_external"), \
              patch.object(serve.local_auth, "record_otp_send") as record:
             with self.assertRaises(ValueError) as ctx:
                 serve.send_login_code({"email": "old@example.com", "mode": "login"})
@@ -100,3 +101,35 @@ def urllib_error_429():
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BrevoTests(unittest.TestCase):
+    def test_brevo_used_when_key_present(self):
+        sent = {}
+
+        class Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b'{"messageId":"x"}'
+
+        def fake_urlopen(req, timeout=0):
+            import json as _json
+            sent["url"] = req.full_url
+            sent["key"] = req.headers.get("Api-key")
+            sent["body"] = _json.loads(req.data)
+            return Resp()
+
+        with patch.dict(os.environ, {"BREVO_API_KEY": "k-test", "MAIL_FROM": "SINKI <thesinkiisinki@gmail.com>"}, clear=False), \
+             patch.object(serve.urllib.request, "urlopen", side_effect=fake_urlopen):
+            self.assertTrue(serve.has_resend_key())
+            self.assertTrue(serve.send_resend_mail("ami@example.com", "123456"))
+        self.assertEqual(sent["url"], "https://api.brevo.com/v3/smtp/email")
+        self.assertEqual(sent["key"], "k-test")
+        self.assertEqual(sent["body"]["sender"]["email"], "thesinkiisinki@gmail.com")
+        self.assertEqual(sent["body"]["to"], [{"email": "ami@example.com"}])
+        self.assertIn("123456", sent["body"]["textContent"])

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Événements organisateurs : dépôt, validation, boost 24 h à l’approbation."""
+"""Événements organisateurs : dépôt, validation, boost 24 h à l’approbation.
+
+Stockage durable : ligne réservée Supabase (blobstore) + photos dans Supabase
+Storage. Avant, tout vivait dans data/events.json, effacé à chaque redémarrage
+de Render.
+"""
 
 import base64
 import hashlib
@@ -10,8 +15,10 @@ import secrets
 import time
 import uuid
 
+import blobstore
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.abspath(os.path.join(ROOT, "..", "data"))
+DATA_DIR = os.path.abspath(os.environ.get("SINKI_DATA_DIR") or os.path.join(ROOT, "..", "data"))
 PATH = os.path.join(DATA_DIR, "events.json")
 PHOTO_DIR = os.path.join(DATA_DIR, "event_photos")
 BOOST_SEC = 24 * 60 * 60
@@ -23,29 +30,31 @@ def _empty():
     return {"events": []}
 
 
+STORE = blobstore.BlobStore("sinki-internal-events", PATH, _empty)
+
+
 def _load():
-    try:
-        with open(PATH, encoding="utf-8") as fh:
-            data = json.load(fh)
-        if isinstance(data, dict) and isinstance(data.get("events"), list):
-            return data
-    except (OSError, ValueError):
-        pass
-    return _empty()
+    data = STORE.load()
+    if not isinstance(data.get("events"), list):
+        data["events"] = []
+    return data
 
 
-def _save(data):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    tmp = PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, PATH)
+def _mutate(fn):
+    def run(data):
+        if not isinstance(data.get("events"), list):
+            data["events"] = []
+        return fn(data)
+    return STORE.mutate(run)
+
+
+def durable():
+    """True when events survive a restart (Supabase configured)."""
+    return bool(blobstore.supabase_conf()[0])
 
 
 def moderator_email():
-    return (os.environ.get("SINKI_MODERATOR_EMAIL") or "bonjour@sinki.app").strip().lower()
+    return (os.environ.get("SINKI_MODERATOR_EMAIL") or "thesinkiisinki@gmail.com").strip().lower()
 
 
 def is_moderator(email, local=False):
@@ -78,13 +87,13 @@ def save_photo(event_id, data_url):
         raise ValueError("photo")
     if not blob or len(blob) > MAX_PHOTO:
         raise ValueError("photo")
-    os.makedirs(PHOTO_DIR, exist_ok=True)
     name = event_id + "." + ext
-    path = os.path.join(PHOTO_DIR, name)
-    with open(path, "wb") as fh:
+    mime = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}[ext]
+    if durable():
+        return blobstore.upload_public("event-photos", name, blob, mime)
+    os.makedirs(PHOTO_DIR, exist_ok=True)
+    with open(os.path.join(PHOTO_DIR, name), "wb") as fh:
         fh.write(blob)
-        fh.flush()
-        os.fsync(fh.fileno())
     return "/event-photos/" + name
 
 
@@ -191,8 +200,6 @@ def create_event(owner, body):
     photo = body.get("photo") or ""
     if not name or not description or not address or not photo:
         raise ValueError("champs")
-    if not body.get("paid"):
-        raise ValueError("paiement")
     extra_days = 0
     try:
         extra_days = int(body.get("extra_boost_days") or 0)
@@ -203,7 +210,6 @@ def create_event(owner, body):
     price = _money(body.get("price_min"))
     eid = str(uuid.uuid4())
     photo_url = save_photo(eid, photo)
-    token = secrets.token_urlsafe(24)
     row = {
         "id": eid,
         "owner": (owner or "").strip().lower(),
@@ -216,18 +222,20 @@ def create_event(owner, body):
         "price_max": price,
         "currency": "EUR",
         "status": "pending",
-        "paid": True,
-        "token": token,
+        "token": secrets.token_urlsafe(24),
         "boost_until": 0,
         "extra_boost_days": extra_days,
         "likes": [],
         "comments": [],
         "created": time.time(),
     }
-    data = _load()
-    data["events"].insert(0, row)
-    _save(data)
-    return row
+
+    def change(data):
+        data["events"].insert(0, row)
+        data["events"] = data["events"][:500]
+        return row
+
+    return _mutate(change)
 
 
 def list_public(viewer=""):
@@ -264,48 +272,39 @@ def review_event(eid, action, token="", require_token=False):
     action = (action or "").strip().lower()
     if action not in ("approve", "reject"):
         raise ValueError("action")
-    data = _load()
-    found = None
-    for ev in data["events"]:
-        if ev.get("id") == eid:
-            found = ev
-            break
-    if not found:
-        raise ValueError("introuvable")
-    if require_token or token:
-        if token != found.get("token"):
+
+    def change(data):
+        found = next((ev for ev in data["events"] if ev.get("id") == eid), None)
+        if not found:
+            raise ValueError("introuvable")
+        if (require_token or token) and not secrets.compare_digest(str(token), str(found.get("token") or "")):
             raise ValueError("lien")
-    found["status"] = "approved" if action == "approve" else "rejected"
-    if action == "approve":
-        extra = int(found.get("extra_boost_days") or 0)
-        found["boost_until"] = time.time() + BOOST_SEC + extra * 24 * 60 * 60
-    else:
-        found["boost_until"] = 0
-    _save(data)
-    return public_row(found)
+        found["status"] = "approved" if action == "approve" else "rejected"
+        if action == "approve":
+            extra = int(found.get("extra_boost_days") or 0)
+            found["boost_until"] = time.time() + BOOST_SEC + extra * 24 * 60 * 60
+        else:
+            found["boost_until"] = 0
+        return public_row(found)
+
+    return _mutate(change)
 
 
 def toggle_like(eid, email):
     email = (email or "").strip().lower()
     if not email:
         raise ValueError("compte")
-    data = _load()
-    found = None
-    for ev in data["events"]:
-        if ev.get("id") == eid:
-            found = ev
-            break
-    if not found or found.get("status") != "approved":
-        raise ValueError("introuvable")
-    likes = _likes(found)
     key = email_key(email)
-    if key in likes:
-        likes = [x for x in likes if x != key]
-    else:
-        likes.append(key)
-    found["likes"] = likes
-    _save(data)
-    return public_row(found, viewer=email)
+
+    def change(data):
+        found = next((ev for ev in data["events"] if ev.get("id") == eid), None)
+        if not found or found.get("status") != "approved":
+            raise ValueError("introuvable")
+        likes = _likes(found)
+        found["likes"] = [x for x in likes if x != key] if key in likes else likes + [key]
+        return public_row(found, viewer=email)
+
+    return _mutate(change)
 
 
 def add_comment(eid, email, nick, text):
@@ -316,19 +315,17 @@ def add_comment(eid, email, nick, text):
         raise ValueError("compte")
     if not text:
         raise ValueError("commentaire")
-    data = _load()
-    found = None
-    for ev in data["events"]:
-        if ev.get("id") == eid:
-            found = ev
-            break
-    if not found or found.get("status") != "approved":
-        raise ValueError("introuvable")
-    comments = found.get("comments") if isinstance(found.get("comments"), list) else []
-    comments.append({"author": email_key(email), "nick": nick, "text": text, "created": time.time()})
-    found["comments"] = comments[-80:]
-    _save(data)
-    return public_row(found, viewer=email)
+
+    def change(data):
+        found = next((ev for ev in data["events"] if ev.get("id") == eid), None)
+        if not found or found.get("status") != "approved":
+            raise ValueError("introuvable")
+        comments = found.get("comments") if isinstance(found.get("comments"), list) else []
+        comments.append({"author": email_key(email), "nick": nick, "text": text, "created": time.time()})
+        found["comments"] = comments[-80:]
+        return public_row(found, viewer=email)
+
+    return _mutate(change)
 
 
 def purge_user(email):
@@ -336,34 +333,42 @@ def purge_user(email):
     if not email:
         return
     key = email_key(email)
-    data = _load()
-    kept = []
-    for ev in data["events"]:
-        if (ev.get("owner") or "") == email:
-            eid = ev.get("id") or ""
-            if eid and os.path.isdir(PHOTO_DIR):
-                for name in os.listdir(PHOTO_DIR):
-                    if name.startswith(str(eid) + "."):
-                        try:
-                            os.unlink(os.path.join(PHOTO_DIR, name))
-                        except OSError:
-                            pass
-            continue
-        ev["likes"] = [x for x in _likes(ev) if x != key]
-        comments = []
-        for item in ev.get("comments") or []:
-            if not isinstance(item, dict):
+    removed = []
+
+    def change(data):
+        kept = []
+        for ev in data["events"]:
+            if (ev.get("owner") or "") == email:
+                removed.append(ev)
                 continue
-            author = str(item.get("author") or item.get("email") or "").strip().lower()
-            if author == email or author == key:
-                continue
-            comments.append({
-                "author": email_key(author) if "@" in author else author,
-                "nick": item.get("nick") or "Sinki",
-                "text": item.get("text") or "",
-                "created": item.get("created") or 0,
-            })
-        ev["comments"] = comments
-        kept.append(ev)
-    data["events"] = kept
-    _save(data)
+            ev["likes"] = [x for x in _likes(ev) if x != key]
+            comments = []
+            for item in ev.get("comments") or []:
+                if not isinstance(item, dict):
+                    continue
+                author = str(item.get("author") or item.get("email") or "").strip().lower()
+                if author == email or author == key:
+                    continue
+                comments.append({
+                    "author": email_key(author) if "@" in author else author,
+                    "nick": item.get("nick") or "Sinki",
+                    "text": item.get("text") or "",
+                    "created": item.get("created") or 0,
+                })
+            ev["comments"] = comments
+            kept.append(ev)
+        data["events"] = kept
+
+    _mutate(change)
+    for ev in removed:
+        url = str(ev.get("photo_url") or "")
+        if "/storage/v1/object/public/event-photos/" in url:
+            blobstore.delete_public("event-photos", [url.rsplit("/", 1)[-1]])
+        elif ev.get("id") and os.path.isdir(PHOTO_DIR):
+            for name in os.listdir(PHOTO_DIR):
+                if name.startswith(str(ev["id"]) + "."):
+                    try:
+                        os.unlink(os.path.join(PHOTO_DIR, name))
+                    except OSError:
+                        pass
+

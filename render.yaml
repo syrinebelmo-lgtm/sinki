@@ -15,7 +15,10 @@ services:
         value: https://smiamxvoztjmvjidmreh.supabase.co
       - key: SUPABASE_SERVICE_ROLE
         sync: false
+      # Codes de connexion : Brevo (gratuit, 300 mails/jour, expéditeur Gmail vérifié).
+      - key: BREVO_API_KEY
+        sync: false
       - key: RESEND_API_KEY
         sync: false
       - key: MAIL_FROM
-        value: Sinki <onboarding@resend.dev>
+        value: SINKI <thesinkiisinki@gmail.com>

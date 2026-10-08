@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SINKI</string>
+    <string name="title_activity_main">SINKI</string>
+    <string name="package_name">com.thesinki.app</string>
+    <string name="custom_url_scheme">com.thesinki.app</string>
+</resources>

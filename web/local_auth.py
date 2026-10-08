@@ -9,6 +9,7 @@ de passe en clair : OTP hashé (sha256).
 """
 
 import base64
+import copy
 import hashlib
 import json
 import math
@@ -26,13 +27,13 @@ from datetime import datetime, timedelta, timezone
 import billing as sinki_billing
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.abspath(os.path.join(ROOT, "..", "data"))
+DATA_DIR = os.path.abspath(os.environ.get("SINKI_DATA_DIR") or os.path.join(ROOT, "..", "data"))
 PATH = os.path.join(DATA_DIR, "accounts.json")
 BACKUP = os.path.join(DATA_DIR, "accounts.bak.json")
 AVATAR_DIR = os.path.join(DATA_DIR, "avatars")
 CODE_TTL = 15 * 60
 SESSION_TTL = 60 * 60 * 24 * 60
-CACHE_TTL = 0
+CACHE_TTL = 3
 AUTH_SHARE = "ZZSKAUTH"
 AUTH_LABEL = "sinki-internal-auth"
 AUTH_SHARE_LEN = 28
@@ -70,6 +71,7 @@ _mem_at = 0
 _bootstrapped = False
 _last_import = 0
 _group_id = ""
+_remote_stamp = None
 
 
 def normalize_email(value):
@@ -126,7 +128,18 @@ def _normalize_store(data):
     return {"accounts": accounts, "pending": pending, "sessions": sessions, "otp_sends": otp_sends}
 
 
+class StoreConflict(RuntimeError):
+    """Another request changed the shared store first; reload and retry."""
+
+
+class StoreUnavailable(RuntimeError):
+    public = "Service de comptes momentanément indisponible. Réessaie dans un instant."
+
+
 def _sb_conf():
+    # SINKI_AUTH_STORE=file: local dev/tests never touch the production accounts.
+    if (os.environ.get("SINKI_AUTH_STORE") or "").strip().lower() == "file":
+        return "", ""
     url = (os.environ.get("SUPABASE_URL") or "").strip().rstrip("/")
     parts = (os.environ.get("SUPABASE_SERVICE_ROLE") or "").strip().split()
     key = parts[0] if parts else ""
@@ -218,86 +231,98 @@ def _save_file(data):
         pass
 
 
-def _find_auth_row():
+def _json_rows(raw):
+    try:
+        rows = json.loads((raw or b"[]").decode("utf-8") or "[]")
+    except (ValueError, UnicodeDecodeError):
+        raise StoreUnavailable("auth store: bad json")
+    return rows if isinstance(rows, list) else []
+
+
+def _remote_get():
+    """Return (row_id, store, stamp), or ("", None, None) when no auth row exists.
+
+    Raises StoreUnavailable on any HTTP/network error: an error must never be
+    mistaken for "no accounts" (that used to create a second, empty store).
+    """
     global _group_id
-    status, raw = _sb_request(
-        "GET",
-        "/rest/v1/groups?origin_label=eq." + urllib.parse.quote(AUTH_LABEL) + "&select=id,share_code,filters",
-    )
+    select = "&select=id,share_code,filters,updated_at"
     rows = []
-    if status < 400 and raw:
+    for flt in (
+        "origin_label=eq." + urllib.parse.quote(AUTH_LABEL),
+        "share_code=eq." + urllib.parse.quote(AUTH_SHARE),
+    ):
         try:
-            rows = json.loads(raw.decode("utf-8") or "[]")
-        except (ValueError, UnicodeDecodeError):
-            rows = []
+            status, raw = _sb_request("GET", "/rest/v1/groups?" + flt + select)
+        except (urllib.error.URLError, OSError) as exc:
+            raise StoreUnavailable("auth store read: %s" % type(exc).__name__)
+        if status >= 400:
+            raise StoreUnavailable("auth store read: HTTP %s" % status)
+        rows = _json_rows(raw)
+        if rows:
+            break
     if not rows:
-        status, raw = _sb_request(
-            "GET",
-            "/rest/v1/groups?share_code=eq." + urllib.parse.quote(AUTH_SHARE) + "&select=id,share_code,filters",
-        )
-        if status < 400 and raw:
-            try:
-                rows = json.loads(raw.decode("utf-8") or "[]")
-            except (ValueError, UnicodeDecodeError):
-                rows = []
-    if not rows:
-        return ""
-    _group_id = str(rows[0].get("id") or "")
-    code = str(rows[0].get("share_code") or "")
+        return "", None, None
+    if len(rows) > 1:
+        # Older code could create duplicates; keep the one holding the most accounts.
+        print("auth store: %s rows found, using the largest" % len(rows), flush=True)
+        rows.sort(key=lambda r: len((_store_from_filters(r.get("filters")).get("accounts") or {})), reverse=True)
+    row = rows[0]
+    _group_id = str(row.get("id") or "")
+    code = str(row.get("share_code") or "")
     if _group_id and (code == AUTH_SHARE or len(code) < AUTH_SHARE_LEN):
-        secret = "SK" + secrets.token_hex(13).upper()
         _sb_request(
             "PATCH",
             "/rest/v1/groups?id=eq." + urllib.parse.quote(_group_id),
-            {"share_code": secret, "origin_label": AUTH_LABEL},
+            {"share_code": "SK" + secrets.token_hex(13).upper(), "origin_label": AUTH_LABEL},
         )
-    return _group_id
+    return _group_id, _store_from_filters(row.get("filters")), row.get("updated_at")
 
 
 def _load_remote():
+    """Store dict, or None when Supabase is not configured. Raises when unreachable."""
+    global _remote_stamp
     if not _sb_conf()[0]:
         return None
-    row_id = _find_auth_row()
-    if not row_id:
-        return _empty()
-    status, raw = _sb_request(
-        "GET",
-        "/rest/v1/groups?id=eq." + urllib.parse.quote(row_id) + "&select=id,filters",
-    )
-    if status >= 400 or not raw:
-        return None
-    try:
-        rows = json.loads(raw.decode("utf-8") or "[]")
-    except (ValueError, UnicodeDecodeError):
-        return None
-    if not rows:
-        return _empty()
-    return _store_from_filters(rows[0].get("filters"))
+    _row_id, store, stamp = _remote_get()
+    _remote_stamp = stamp
+    return store if store is not None else _empty()
 
 
-def _save_remote(data):
-    global _group_id
-    if not _sb_conf()[0]:
-        return False
+def _filters_of(data):
     data = _prune(_normalize_store(data))
-    filters = {
+    return {
         "v": 1,
         "accounts": data.get("accounts") or {},
         "pending": data.get("pending") or {},
         "sessions": data.get("sessions") or {},
         "otp_sends": data.get("otp_sends") or {},
     }
-    row_id = _group_id or _find_auth_row()
+
+
+def _save_remote(data):
+    """Compare-and-swap write. Raises StoreConflict if someone wrote in between."""
+    global _group_id, _remote_stamp
+    if not _sb_conf()[0]:
+        return False
+    filters = _filters_of(data)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    row_id = _group_id or _remote_get()[0]
     if row_id:
-        status, _raw = _sb_request(
+        guard = ("&updated_at=eq." + urllib.parse.quote(_remote_stamp)) if _remote_stamp else "&updated_at=is.null"
+        status, raw = _sb_request(
             "PATCH",
-            "/rest/v1/groups?id=eq." + urllib.parse.quote(row_id),
-            {"filters": filters, "origin_label": AUTH_LABEL},
+            "/rest/v1/groups?id=eq." + urllib.parse.quote(row_id) + guard,
+            {"filters": filters, "origin_label": AUTH_LABEL, "updated_at": now_iso},
         )
-        if status < 400:
-            _group_id = row_id
-            return True
-        _group_id = ""
+        if status >= 400:
+            raise StoreUnavailable("auth store write: HTTP %s" % status)
+        rows = _json_rows(raw)
+        if not rows:
+            raise StoreConflict("auth store changed")
+        _group_id = row_id
+        _remote_stamp = rows[0].get("updated_at")
+        return True
     body = {
         "share_code": "SK" + secrets.token_hex(13).upper(),
         "origin_label": AUTH_LABEL,
@@ -305,113 +330,93 @@ def _save_remote(data):
         "filters": filters,
         "candidate_outing_ids": [],
         "status": "open",
+        "updated_at": now_iso,
         "expires_at": (datetime.now(timezone.utc) + timedelta(days=3650)).isoformat(),
     }
     status, raw = _sb_request("POST", "/rest/v1/groups", body)
-    if status in (200, 201) and raw:
-        try:
-            rows = json.loads(raw.decode("utf-8"))
-            if rows:
-                _group_id = str(rows[0].get("id") or "")
-        except (ValueError, UnicodeDecodeError):
-            pass
-        return True
-    return False
-
-
-def _merge_accounts(remote, local):
-    """Ajoute les comptes locaux absents du store partagé. Ne log jamais les emails."""
-    merged = _normalize_store(remote)
-    imported = 0
-    local = _normalize_store(local)
-    for email, acc in (local.get("accounts") or {}).items():
-        if email not in merged["accounts"]:
-            merged["accounts"][email] = dict(acc)
-            imported += 1
-        else:
-            cur = merged["accounts"][email]
-            for key in ("first_name", "last_name", "nick", "group_code", "avatar_ext", "avatar_data", "avatar_rev", "plan"):
-                if not cur.get(key) and acc.get(key):
-                    cur[key] = acc[key]
-            if not cur.get("fav_ids") and acc.get("fav_ids"):
-                cur["fav_ids"] = acc.get("fav_ids")
-            if not cur.get("plans") and acc.get("plans"):
-                cur["plans"] = acc.get("plans")
-            if acc.get("entitlements") and not cur.get("entitlements"):
-                cur["entitlements"] = acc.get("entitlements")
-    for token, sess in (local.get("sessions") or {}).items():
-        if token not in merged["sessions"]:
-            merged["sessions"][token] = dict(sess)
-    sends = dict(merged.get("otp_sends") or {})
-    for email, stamps in (local.get("otp_sends") or {}).items():
-        have = set(sends.get(email) or [])
-        for stamp in stamps or []:
-            try:
-                have.add(float(stamp))
-            except (TypeError, ValueError):
-                continue
-        if have:
-            sends[email] = sorted(have)
-    merged["otp_sends"] = sends
-    return merged, imported
+    if status not in (200, 201):
+        raise StoreUnavailable("auth store create: HTTP %s" % status)
+    rows = _json_rows(raw)
+    if rows:
+        _group_id = str(rows[0].get("id") or "")
+        _remote_stamp = rows[0].get("updated_at")
+    return True
 
 
 def bootstrap():
-    """Fusionne le cache disque vers Supabase. Appeler après load_env()."""
+    """Au démarrage : le store Supabase fait foi.
+
+    Le cache disque n’est recopié vers Supabase que si le store distant
+    n’existe pas encore (première migration). Avant, chaque démarrage local
+    réinjectait les comptes du cache, y compris ceux supprimés depuis.
+    """
     global _mem, _mem_at, _bootstrapped, _last_import
     with _LOCK:
         if _bootstrapped:
             return _last_import
         _bootstrapped = True
-        local = _load_file()
-        remote = _load_remote()
-        if remote is None:
-            _mem = local
+        if not _sb_conf()[0]:
+            _mem = _load_file()
             _mem_at = time.time()
             return 0
-        merged, imported = _merge_accounts(remote, local)
-        _save_file(merged)
-        if imported or remote != merged or not (remote.get("accounts") or {}):
-            _save_remote(merged)
-        _mem = merged
+        global _remote_stamp
+        row_id, remote, _remote_stamp = _remote_get()
+        imported = 0
+        if not row_id:
+            remote = _empty()
+            seed = _load_file()
+            if seed.get("accounts"):
+                imported = len(seed["accounts"])
+                remote = seed
+                _save_remote(remote)
+        _mem = remote
         _mem_at = time.time()
         _last_import = imported
-        print(
-            "Sinki auth → store partagé (%s comptes, +%s importés)"
-            % (len(merged.get("accounts") or {}), imported),
-            flush=True,
-        )
+        print("Sinki auth → store partagé (%s comptes, +%s importés)" % (len(remote.get("accounts") or {}), imported), flush=True)
         return imported
 
 
-def _load():
+def _load(fresh=False):
     global _mem, _mem_at
     now = time.time()
-    if _mem is not None and now - _mem_at < CACHE_TTL:
-        return _mem
+    if not fresh and _mem is not None and now - _mem_at < CACHE_TTL:
+        return copy.deepcopy(_mem)
     remote = _load_remote()
-    local = _load_file()
-    if remote is None:
-        data = local
-    elif (remote.get("accounts") or {}) or not (local.get("accounts") or {}):
-        data = remote
-    else:
-        data = local
+    data = remote if remote is not None else _load_file()
     _mem = data
     _mem_at = now
-    return data
+    return copy.deepcopy(data)
 
 
 def _save(data):
     global _mem, _mem_at
     data = _normalize_store(data)
-    _mem = data
-    _mem_at = time.time()
-    _save_file(data)
-    try:
+    if _sb_conf()[0]:
         _save_remote(data)
-    except Exception:
-        pass
+    else:
+        _save_file(data)
+    _mem = copy.deepcopy(data)
+    _mem_at = time.time()
+
+
+def _mutate(fn):
+    """Load → fn(data) → save, retried when another request wrote first.
+
+    fn returns (result, changed). Nothing is cached unless the write succeeded.
+    """
+    with _LOCK:
+        for attempt in range(6):
+            data = _load(fresh=attempt > 0)
+            result, changed = fn(data)
+            if not changed:
+                return result
+            try:
+                _save(data)
+                return result
+            except StoreConflict:
+                time.sleep(0.05 * (attempt + 1))
+                continue
+        raise StoreUnavailable("auth store: too many concurrent writes")
 
 
 def _code_digest(token):
@@ -488,8 +493,8 @@ def record_otp_send(email):
     if not email:
         return
     now = time.time()
-    with _LOCK:
-        data = _load()
+
+    def change(data):
         sends = data.setdefault("otp_sends", {})
         stamps = []
         for stamp in sends.get(email) or []:
@@ -501,8 +506,9 @@ def record_otp_send(email):
                 stamps.append(val)
         stamps.append(now)
         sends[email] = stamps
-        data["otp_sends"] = sends
-        _save(data)
+        return None, True
+
+    _mutate(change)
 
 
 def _strip_lock_fields(row):
@@ -521,20 +527,20 @@ def clear_otp_sends(email):
     email = normalize_email(email)
     if not email:
         return {"cleared": False, "had_sends": 0, "extra_keys": 0}
-    with _LOCK:
-        data = _load()
+
+    def change(data):
         stamps = (data.get("otp_sends") or {}).pop(email, None) or []
-        extra = 0
-        extra += _strip_lock_fields((data.get("accounts") or {}).get(email))
+        extra = _strip_lock_fields((data.get("accounts") or {}).get(email))
         extra += _strip_lock_fields((data.get("pending") or {}).get(email))
-        _save(data)
-        return {"cleared": True, "had_sends": len(stamps), "extra_keys": extra}
+        return {"cleared": True, "had_sends": len(stamps), "extra_keys": extra}, True
+
+    return _mutate(change)
 
 
 def clear_all_otp_locks():
     """Drop send windows and lock fields for every account. Does not delete accounts."""
-    with _LOCK:
-        data = _load()
+
+    def change(data):
         send_rows = len(data.get("otp_sends") or {})
         data["otp_sends"] = {}
         extra = 0
@@ -546,20 +552,21 @@ def clear_all_otp_locks():
             if key in data:
                 data.pop(key, None)
                 extra += 1
-        _save(data)
-        return {"cleared": True, "had_send_rows": send_rows, "extra_keys": extra}
+        return {"cleared": True, "had_send_rows": send_rows, "extra_keys": extra}, True
+
+    return _mutate(change)
 
 
 def request_code(email, profile=None):
     email = normalize_email(email)
     profile = profile or {}
     nick = (profile.get("nick") or "")[:40]
-    if nick and pseudo_taken(nick, email):
-        raise ValueError("taken")
     code = "%06d" % secrets.randbelow(1000000)
-    with _LOCK:
-        data = _load()
-        data["pending"][email] = {
+
+    def change(data):
+        if nick and _nick_taken_in(data, nick, email):
+            raise ValueError("taken")
+        data.setdefault("pending", {})[email] = {
             "code_hash": _code_digest(code),
             "exp": time.time() + CODE_TTL,
             "first_name": (profile.get("first_name") or "")[:40],
@@ -568,25 +575,31 @@ def request_code(email, profile=None):
             "via": "local",
             "tries": 0,
         }
-        _save(data)
-    return code
+        return code, True
+
+    return _mutate(change)
 
 
-def mark_pending_external(email, via="gotrue"):
+def mark_pending_external(email, via="gotrue", profile=None):
     email = normalize_email(email)
     if not email:
         return False
-    with _LOCK:
-        data = _load()
+    profile = profile or {}
+
+    def change(data):
         pending = dict((data.get("pending") or {}).get(email) or {})
         pending.pop("code", None)
         pending.pop("code_hash", None)
+        for key in ("first_name", "last_name", "nick"):
+            if profile.get(key):
+                pending[key] = str(profile[key])[:40]
         pending["via"] = via
         pending["exp"] = time.time() + CODE_TTL
-        pending.setdefault("tries", 0)
+        pending["tries"] = 0
         data.setdefault("pending", {})[email] = pending
-        _save(data)
-        return True
+        return True, True
+
+    return _mutate(change)
 
 
 def pending_via(email):
@@ -638,13 +651,13 @@ def verify_code(email, token, profile=None):
     email = normalize_email(email)
     token = str(token or "").strip()
     profile = profile or {}
-    with _LOCK:
-        data = _load()
+
+    def change(data):
         pending = (data.get("pending") or {}).get(email) or {}
         if not pending or time.time() > float(pending.get("exp") or 0):
-            return None
+            return None, False
         if pending.get("via") == "gotrue":
-            return None
+            return None, False
         if not _pending_matches(pending, token):
             tries = int(pending.get("tries") or 0) + 1
             if tries >= MAX_VERIFY_TRIES:
@@ -652,42 +665,44 @@ def verify_code(email, token, profile=None):
             else:
                 pending["tries"] = tries
                 data["pending"][email] = pending
-            _save(data)
-            return None
+            return None, True
         acc = _upsert_account(data, email, profile, pending)
         data["pending"].pop(email, None)
         sess = _new_session(data, email)
-        _save(data)
-        return sess, acc
+        return (sess, dict(acc)), True
+
+    return _mutate(change)
 
 
 def finalize_login(email, profile=None):
     """Crée session + compte après un OTP déjà validé ailleurs (GoTrue)."""
     email = normalize_email(email)
     profile = profile or {}
-    with _LOCK:
-        data = _load()
+
+    def change(data):
         pending = (data.get("pending") or {}).get(email) or {}
         acc = _upsert_account(data, email, profile, pending)
-        data["pending"].pop(email, None)
+        data.setdefault("pending", {}).pop(email, None)
         sess = _new_session(data, email)
-        _save(data)
-        return sess, acc
+        return (sess, dict(acc)), True
+
+    return _mutate(change)
 
 
 def revoke_session(token):
     token = (token or "").strip()
     if not token.startswith("sk_"):
         return False
-    with _LOCK:
-        data = _load()
+
+    def change(data):
         sessions = data.get("sessions") or {}
         if token not in sessions:
-            return False
+            return False, False
         sessions.pop(token, None)
         data["sessions"] = sessions
-        _save(data)
-        return True
+        return True, True
+
+    return _mutate(change)
 
 
 def user_from_token(token):
@@ -723,22 +738,23 @@ def user_from_token(token):
 
 def save_account(email, fields):
     email = normalize_email(email)
-    with _LOCK:
-        data = _load()
+
+    def change(data):
         acc = (data.get("accounts") or {}).get(email)
         if not acc:
-            return None
+            return None, False
         for key in ("first_name", "last_name", "group_code", "plans", "fav_ids", "avatar_ext", "avatar_data", "avatar_rev", "plan", "entitlements"):
             if key in fields:
                 acc[key] = fields[key]
         if "nick" in fields:
             nick = fields.get("nick") or ""
-            if nick and pseudo_taken(nick, email):
+            if nick and _nick_taken_in(data, nick, email):
                 raise ValueError("taken")
             acc["nick"] = nick[:40]
         data["accounts"][email] = acc
-        _save(data)
-        return acc
+        return dict(acc), True
+
+    return _mutate(change)
 
 
 def avatar_path(user_id, ext):
@@ -819,20 +835,21 @@ def save_avatar(email, blob, ext):
         raise ValueError("Format invalide. Utilise jpg, png ou webp.")
     if not blob:
         raise ValueError("Photo invalide")
-    with _LOCK:
-        data = _load()
+    mime = AVATAR_MIME.get(ext) or "application/octet-stream"
+
+    def change(data):
         acc = (data.get("accounts") or {}).get(email)
         if not acc:
             raise ValueError("Compte introuvable")
-        uid = acc.get("id") or ""
-        mime = AVATAR_MIME.get(ext) or "application/octet-stream"
         acc["avatar_ext"] = ext
         acc["avatar_data"] = "data:%s;base64,%s" % (mime, base64.b64encode(blob).decode("ascii"))
         acc["avatar_rev"] = int(time.time())
         data["accounts"][email] = acc
-        _save(data)
-        _write_avatar_cache(uid, ext, blob)
-        return avatar_url(acc)
+        return dict(acc), True
+
+    acc = _mutate(change)
+    _write_avatar_cache(acc.get("id") or "", ext, blob)
+    return avatar_url(acc)
 
 
 def read_avatar(user_id, ext):
@@ -857,15 +874,18 @@ def delete_account(email):
     email = normalize_email(email)
     if not email:
         return False
-    with _LOCK:
-        data = _load()
+
+    def change(data):
         acc = (data.get("accounts") or {}).pop(email, None)
         (data.get("pending") or {}).pop(email, None)
+        (data.get("otp_sends") or {}).pop(email, None)
         sessions = data.get("sessions") or {}
         for token, sess in list(sessions.items()):
             if normalize_email((sess or {}).get("email")) == email:
                 sessions.pop(token, None)
-        _save(data)
+        return acc, True
+
+    acc = _mutate(change)
     uid = (acc or {}).get("id") or ""
     if uid and os.path.isdir(AVATAR_DIR):
         for name in os.listdir(AVATAR_DIR):
@@ -875,3 +895,4 @@ def delete_account(email):
                 except OSError:
                     pass
     return True
+
