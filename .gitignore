@@ -12,3 +12,4 @@ web/.pypkgs/
 fly.toml.bak
 
 graphify-out/
+.env.nouveau

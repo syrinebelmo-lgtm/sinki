@@ -2760,9 +2760,10 @@ def send_login_code(body, host_header=""):
         "nick": nick,
     }
 
-    # Prefer Resend when configured: bypasses Supabase Auth email rate limits.
-    # Failed Resend attempts must not count toward the local send window.
-    if has_resend_key():
+    # Prefer Resend/Brevo when configured: bypasses Supabase Auth email rate limits.
+    # Failed attempts must not count toward the local send window.
+    # SINKI_MAIL_DEV=console (never on Render): code printed in the local terminal.
+    if has_resend_key() or dev_mail_console():
         return send_local_channel_code(email, profile, exists, in_auth, mode, on_render, note)
 
     # No Resend: GoTrue must deliver (Render has no SMTP / Mail.app).
