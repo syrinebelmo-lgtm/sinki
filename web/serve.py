@@ -539,7 +539,10 @@ def photo_matches_place(url, name, address=""):
     if not wanted:
         return False  # "Le Cinéma" alone cannot be checked against a file name
     hits = sum(1 for w in wanted if w in file_words)
-    if hits < max(1, math.ceil(len(wanted) * 2 / 3)):
+    # Short names must match entirely: "Bouchon Palais Grillet" is not the
+    # "Restaurant Starsmash Rue Palais Grillet" photo (same street, other place).
+    needed = len(wanted) if len(wanted) <= 3 else math.ceil(len(wanted) * 2 / 3)
+    if hits < max(1, needed):
         return False
     # One shared word is weak evidence ("Le Maryland" vs "University of Maryland
     # Station", "Shen Yun" vs a handball match): never enough on its own.
@@ -3702,7 +3705,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/stores":
                 payload = {"ok": True, "ios": store_links()["ios"], "android": store_links()["android"]}
             elif path == "/api/health":
-                payload = {"ok": True, "app": "sinki", "v": 121, "mail": mail_health(), "events": events_enabled()}
+                payload = {"ok": True, "app": "sinki", "v": 122, "mail": mail_health(), "events": events_enabled()}
             elif path == "/api/billing/catalog":
                 payload = {"ok": True, "catalog": __import__("catalog_data").CATALOG}
             elif path == "/api/billing/entitlements":
