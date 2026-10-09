@@ -22,6 +22,9 @@ class PhotoPlaceCheckTests(unittest.TestCase):
         self.check("Home Sweet Home", "Foster%20Elementary%20School%20in%20Sweet%20Home%2C%20Oregon.jpg", "75011 Paris", False)
         self.check("Shen Yun", "Beach%20handball%20Shen%20Yun.jpg", "Paris", False)
 
+    def test_same_street_other_restaurant_is_hidden(self):
+        self.check("Bouchon Palais Grillet", "Int%C3%A9rieur%20Restaurant%20Starsmash%20Rue%20Palais%20Grillet%20-%20Lyon%20II.jpg", "Rue Palais Grillet, 69002 Lyon", False)
+
     def test_named_and_located_photo_is_kept(self):
         self.check("Restaurant Le Jean Moulin", "Restaurant%20Le%20Jean%20Moulin%2C%20rue%20de%20S%C3%A8ze%20(Lyon).jpg", "45 rue de Sèze, 69006 Lyon", True)
 
