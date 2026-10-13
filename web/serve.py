@@ -3506,7 +3506,7 @@ STATIC_FILES = {
     "/app.js", "/i18n.js", "/catalog.js", "/billing.js", "/styles.css",
     "/favicon.svg", "/biche-sinki.png", "/flyer-qr.png", "/flyer-qr.svg",
 }
-STATIC_DIRS = ("/biche/", "/icons/", "/public/")
+STATIC_DIRS = ("/biche/", "/icons/", "/public/", "/emoji/")
 # Origins of the bundled iOS / Android app (Capacitor WebView).
 NATIVE_ORIGINS = {"capacitor://localhost", "https://localhost", "http://localhost", "ionic://localhost"}
 STATIC_EXT = (".png", ".jpg", ".jpeg", ".svg", ".webp", ".webmanifest")

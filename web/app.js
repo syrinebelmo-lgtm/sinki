@@ -16,6 +16,43 @@ function publicOrigin() {
 }
 const app = $("#app");
 
+// Emojis are drawn from bundled Twemoji images (CC-BY 4.0, see privacy page):
+// some phones (the iOS simulator at least) showed "?" boxes instead.
+const EMOJI_FILES = new Set(["1f30d", "1f319", "1f321", "1f324", "1f327", "1f33f", "1f3b2", "1f3b3", "1f3b5", "1f3db", "1f4b6", "1f4c5", "1f4cd", "1f68c", "1f697", "1f6b6", "1f6cd", "1f97e", "1f98c", "2600", "2615", "2728"]);
+const EMOJI_RE = /([\u2600-\u27BF\u{1F300}-\u{1FAFF}])\uFE0F?/gu;
+const EMOJI_TEST = /[\u2600-\u27BF\u{1F300}-\u{1FAFF}]/u;
+function emojiFile(ch) {
+  const cp = ch.codePointAt(0).toString(16);
+  return EMOJI_FILES.has(cp) ? cp : "";
+}
+function emojify(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentNode && /^(SCRIPT|STYLE|TEXTAREA|OPTION)$/.test(n.parentNode.nodeName)) ? NodeFilter.FILTER_REJECT : (EMOJI_TEST.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP),
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach((node) => {
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    node.nodeValue.replace(EMOJI_RE, (m, ch, idx) => {
+      const file = emojiFile(ch);
+      if (!file) return m;
+      frag.append(node.nodeValue.slice(last, idx));
+      const img = document.createElement("img");
+      img.className = "emo";
+      img.alt = ch;
+      img.src = "/emoji/" + file + ".svg";
+      frag.append(img);
+      last = idx + m.length;
+      return m;
+    });
+    if (!last) return;
+    frag.append(node.nodeValue.slice(last));
+    node.replaceWith(frag);
+  });
+}
+new MutationObserver(() => emojify(app)).observe(app, { childList: true, subtree: true });
+
 const RADII = [5, 15, 30];
 
 function loadLang() {
@@ -2025,7 +2062,7 @@ function render() {
         <button class="chip${!onHomeArea() ? " on" : ""}" data-act="area-int">🌍 ${t("international")}</button>
       </div>
       <p class="hint">${onHomeArea() ? t("hint_home", { country: state.homeCountry?.name || t("france") }) : t("hint_int")}</p>
-      <button class="btn secondary geo-btn" type="button" data-act="geo">${state.geoBusy ? t("geo_busy") : "⌖ " + t("geo")}</button>
+      <button class="btn secondary geo-btn" type="button" data-act="geo">${state.geoBusy ? t("geo_busy") : "📍 " + t("geo")}</button>
       <p class="hint">${t("geo_privacy")}</p>
       ${!onHomeArea() && state.area === "international" && !state.intCountry ? `
       <label>${t("country")}</label>
@@ -2176,7 +2213,7 @@ function render() {
   const accPhoto = state.account?.avatar_url;
   const accBtn = `<button class="icon-btn acc-btn${accPhoto ? " has-photo" : ""}${state.screen === "account" ? " on" : ""}" data-act="account" aria-label="${t("account")}">${accPhoto ? `<img class="acc-photo" src="${escapeHtml(accPhoto)}" alt="" />` : `<img class="top-ico" src="/icons/account.png" alt="" />`}</button>`;
   const leftExtra = back.includes("icon-btn") ? back : "";
-  app.innerHTML = `<header class="topbar"><div class="top-left">${cal}${leftExtra}</div><div class="brand">Sinki</div><div class="top-actions">${setBtn}${accBtn}</div></header>${body}${sheet}${paywallHtml()}`;
+  app.innerHTML = `<header class="topbar"><div class="top-left">${cal}${leftExtra}</div><div class="brand">SINKI</div><div class="top-actions">${setBtn}${accBtn}</div></header>${body}${sheet}${paywallHtml()}`;
   bind();
 }
 

@@ -11,9 +11,12 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; min-height: 100%; overflow: hidden; }
+/* iOS gives buttons a blue default text colour. */
+button { color: var(--ink); }
+
 body {
   margin: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
   background: radial-gradient(1200px 600px at 50% -10%, #e7efe4 0%, var(--cream) 55%);
   color: var(--ink);
 }
@@ -60,8 +63,9 @@ body {
   align-items: center;
   justify-content: space-between;
   position: relative;
-  padding: 12px 14px;
-  min-height: 64px;
+  /* iPhone: keep the buttons below the clock / Dynamic Island. */
+  padding: calc(12px + env(safe-area-inset-top)) 14px 12px;
+  min-height: calc(64px + env(safe-area-inset-top));
   flex-shrink: 0;
 }
 .top-left, .top-actions {
@@ -342,7 +346,8 @@ input[type="range"] { width: 100%; accent-color: var(--forest); }
 .home.page.has-nav {
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
+  /* Home content sits in the middle of the screen, not stuck to the top. */
+  justify-content: center;
   overflow-y: auto;
 }
 .poll-card {
@@ -544,3 +549,6 @@ html[dir="rtl"] .set-row { text-align: right; }
 .nav button { min-height: 44px; padding: 10px 2px; font-size: 11px; }
 .page.has-nav { padding-bottom: 110px; }
 .sheet { position: absolute; inset: 0; }
+
+/* Bundled emoji images (see emojify in app.js). */
+img.emo { height: 1.15em; width: 1.15em; vertical-align: -0.2em; display: inline-block; margin: 0 0.05em; }
