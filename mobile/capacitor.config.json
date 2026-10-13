@@ -3,7 +3,8 @@
   "appName": "SINKI",
   "webDir": "www",
   "ios": {
-    "contentInset": "always"
+    "contentInset": "never",
+    "backgroundColor": "#FBF6EF"
   },
   "android": {
     "allowMixedContent": false

@@ -14,7 +14,7 @@ const files = [
   "app.js", "i18n.js", "catalog.js", "billing.js", "styles.css",
   "favicon.svg", "biche-sinki.png",
 ];
-const dirs = ["biche", "icons", "public"];
+const dirs = ["biche", "icons", "public", "emoji"];
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
