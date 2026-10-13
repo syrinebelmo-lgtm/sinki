@@ -1,6 +1,30 @@
 # Bilan SINKI : audit, corrections et préparation aux stores
 
-Date : 7 octobre 2026. Branche de travail : `claude/preparation-stores` (rien n'est encore poussé sur GitHub ni déployé).
+## Mise à jour du 13 octobre 2026 : état réel en ligne
+
+**En ligne sur https://sinki.onrender.com (vérifié) :**
+- toutes les corrections du bilan ci-dessous (PR #3, #4, #5 fusionnées et déployées) ;
+- nouvelle base Supabase gratuite (projet « SINKI NEW ») : 145 662 villes et 192 329 vraies sorties, sans les 2,4 millions de clones ;
+- l'ancienne base pleine (1 630 Mo, en lecture seule) est en pause, réactivable pendant 1 an. La sauvegarde des clones est dans `~/sinki-sauvegardes/` ;
+- emails de code via Brevo (gratuit, 300/jour, expéditeur thesinkiisinki@gmail.com). Testé de bout en bout : inscription réelle, code reçu, compte créé puis supprimé ;
+- espace organisateur durable (Supabase + stockage des photos) ;
+- filtres « temps disponible » et « moment » branchés ; photos encore plus strictes ;
+- nom affiché : SINKI. Emojis dessinés (Twemoji) pour un rendu identique partout.
+
+**Applications :**
+- Android : compile et fonctionne dans l'émulateur, reliée au site en ligne ;
+- iPhone : compile avec Xcode 26.3 (compatible App Store) et fonctionne dans le simulateur iPhone 17. Testé : accueil, recherche de ville, filtres, résultats réels.
+
+**Reste à faire de ton côté :**
+- pour publier : compte Apple Developer (99 $/an) et compte Google Play (25 $ une fois, puis 12 testeurs pendant 14 jours) ;
+- changer ton mot de passe Mac (il a été écrit dans la conversation) ;
+- les anciens comptes n'ont pas été migrés : les utilisateurs existants doivent se réinscrire ;
+- les emails partent d'une adresse Gmail : ils peuvent arriver dans les spams. Un domaine à toi améliorerait la délivrabilité ;
+- les paiements ne sont pas branchés : ils nécessitent les comptes développeur et les achats intégrés (voir section 5).
+
+---
+
+Date : 7 octobre 2026. Branche de travail initiale : `claude/preparation-stores` (fusionnée depuis).
 Sauvegardes : tags Git `backup-avant-claude-2026-10-07` et `backup-origin-main-2026-10-07`, plus une copie des données non versionnées dans `~/sinki-sauvegardes/`.
 
 ## 0. Les outils installés
