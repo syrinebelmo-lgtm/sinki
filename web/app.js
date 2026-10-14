@@ -617,7 +617,9 @@ function localRange(min, max, code) {
 }
 function euro(min, max, currency) {
   if (min == null && max == null) return t("price_confirm");
-  const code = String(currency || "EUR").toUpperCase();
+  // The code ends up in innerHTML: outings shared in a group come from other phones.
+  const rawCode = String(currency || "EUR").toUpperCase();
+  const code = /^[A-Z]{3}$/.test(rawCode) ? rawCode : "EUR";
   const rawA = Number(min ?? 0);
   const rawB = Number(max ?? min ?? 0);
   if (!Number.isFinite(rawA) || !Number.isFinite(rawB)) return t("price_confirm");
@@ -839,13 +841,17 @@ function eventStatusLabel(ev) {
   if (ev.status === "approved") return t("ev_approved");
   return t("ev_pending");
 }
+// Photo URL placed in style="background-image:url('…')": a quote must not end the attribute.
+function cssUrl(raw) {
+  return escapeHtml(assetUrl(raw)).replace(/'/g, "%27");
+}
 function safeHttpUrl(raw) {
   const url = String(raw || "").trim();
   return /^https?:\/\//i.test(url) ? url : "";
 }
 function cardHtml(item, mode) {
   const cover = item.photo_url
-    ? `<div class="cover" style="background-image:url('${assetUrl(item.photo_url).replace(/'/g, "%27")}')">`
+    ? `<div class="cover" style="background-image:url('${cssUrl(item.photo_url)}')">`
     : `<div class="cover empty">🦌`;
   const why = mode === "guided"
         ? `<div class="why">${t("why")} ${item.category === "Shopping" || state.type === "shopping" ? t("why_shop") : state.type === "randonnee" ? t("why_hike") : state.unlimited ? t("why_unlim") : t("why_budget", { n: state.budget })} · ${t("why_people", { n: state.people, who: state.people > 1 ? t("persons") : t("person") })}${item.distance_km != null ? " · " + item.distance_km + " km" : ""}${item.photo_url ? "" : " · " + t("why_nophoto")}</div>`
@@ -855,7 +861,7 @@ function cardHtml(item, mode) {
   const siteHtml = site
     ? `<a class="linkish" href="${escapeHtml(site)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${official ? t("site_official") : t("site_outing")}</a>`
     : "";
-  return `<article class="card${item.boosted ? " is-boost" : ""}" data-id="${item.id}" data-detail="${item.id}">
+  return `<article class="card${item.boosted ? " is-boost" : ""}" data-id="${escapeHtml(String(item.id))}" data-detail="${escapeHtml(String(item.id))}">
     ${cover}
       ${item.boosted ? `<span class="boost-tag">${t("ev_boost_tag")}</span>` : ""}
       <button class="heart" data-fav="${item.id}">${isFav(item.id) ? "♥" : "♡"}</button>
@@ -866,7 +872,7 @@ function cardHtml(item, mode) {
       <div class="meta">${priceLabel(item)}${item.distance_km != null ? " · " + item.distance_km + " km" : ""}</div>
       ${isEventItem(item) ? eventSocialHtml(item) : ""}
       ${why}
-      <button class="linkish" data-detail="${item.id}">${t("see_all")}</button>
+      <button class="linkish" data-detail="${escapeHtml(String(item.id))}">${t("see_all")}</button>
       <button class="linkish" data-route="${item.id}">${t("go_there")}</button>
       ${siteHtml}
       <button class="linkish" data-send-group="${item.id}">${t("send_g")}</button>
@@ -1120,6 +1126,7 @@ function sourceLabel(name) {
   const key = String(name || "").toLowerCase();
   if (key === "osm") return "OpenStreetMap";
   if (key === "nearby") return "Catalogue Sinki (sortie proche)";
+  if (key === "official_website") return t("src_official");
   if (key === "datatourisme") return "DATAtourisme";
   if (!key) return "Non renseignée";
   return name;
@@ -1213,7 +1220,7 @@ function photoCreditHtml(d) {
 }
 function detailSheetHtml(d) {
   const cover = d.photo_url
-    ? `<div class="sheet-cover" style="background-image:url('${assetUrl(d.photo_url).replace(/'/g, "%27")}')"></div>`
+    ? `<div class="sheet-cover" style="background-image:url('${cssUrl(d.photo_url)}')"></div>`
     : `<div class="sheet-cover empty">🦌</div>`;
   const site = safeHttpUrl(d.website_url || d.source_url);
   const mapUrl = mapsPlaceUrl(d);
@@ -1543,7 +1550,7 @@ function settingsPage() {
     if (!logged) {
       return `<div class="page has-nav">
         <h1>${t("ev_title")}</h1>
-        <p class="lead">${t("set_need_login")}</p>
+        <p class="lead">${t("ev_need_login")}</p>
         <button class="btn" data-act="account">${t("set_open_account")}</button>
         ${navHtml("home")}
       </div>`;
@@ -2157,7 +2164,7 @@ function render() {
     const budgetLine = listed || state.unlimited ? (state.type === "shopping" ? t("all_budgets") : state.type === "randonnee" ? t("trails") : t("budget_free")) : t("budget_max", { n: state.budget });
     body = `<div class="page has-nav">
       ${state.weather ? `<div class="weather">${state.weather} · ${escapeHtml(state.city?.name || "")}</div>` : ""}
-      <p class="lead" style="margin-bottom:0">${t("for_who", { n: state.people, who, city: state.city?.name || "" })}</p>
+      <p class="lead" style="margin-bottom:0">${escapeHtml(t("for_who", { n: state.people, who, city: state.city?.name || "" }))}</p>
       <h1>${title}${listed && shown.length ? " · " + shown.length : ""}</h1>
       <p class="lead">📅 ${formatDate(state.date)} · ${budgetLine} · ${escapeHtml(t("vibe_" + vibeId(state.vibe)))}</p>
       ${intro}${altHtml}${shown.length ? shown.map((item) => cardHtml(item, "guided")).join("") : ""}
@@ -2176,7 +2183,7 @@ function render() {
     const chat = state.groupChat.filter((m) => !blocked.includes(String(m.name || "").toLowerCase())).map((m) => `<div class="bubble"><div class="who">${escapeHtml(m.name)}${m.id && m.name !== chatDisplayName() ? ` <button class="linkish" data-act="chat-report" data-id="${escapeHtml(String(m.id))}">${t("chat_report")}</button> <button class="linkish" data-act="chat-block" data-id="${escapeHtml(String(m.name))}">${t("chat_block")}</button>` : ""}</div>${escapeHtml(m.text || "")}${m.outing ? `<button class="share-card" data-detail="${escapeHtml(String(m.outing.id || ""))}">${escapeHtml(m.outing.name)} · ${priceLabel(m.outing)} · ${t("see_all")}</button>` : ""}</div>`).join("");
     const autoNick = String((state.account && state.account.first_name) || "").trim();
     const nickField = autoNick
-      ? `<p class="hint">${t("nick_auto", { name: autoNick })}</p>`
+      ? `<p class="hint">${escapeHtml(t("nick_auto", { name: autoNick }))}</p>`
       : `<label>${t("nick")}</label>
       <input type="text" id="nick" placeholder="Alex" value="${escapeHtml(state.groupNick)}" />`;
     body = `<div class="page has-nav">
@@ -2200,7 +2207,7 @@ function render() {
       ${navHtml("group")}
     </div>`;
   } else if (state.screen === "plans") {
-    body = `<div class="page has-nav"><h1>${t("plans_title")}</h1>${state.plans.length ? state.plans.map((item) => `<p class="hint">📅 ${item.planned_for ? formatDate(item.planned_for) : ""}</p>${cardHtml(item, "fav")}`).join("") : `<p class="empty">${t("plans_empty")}</p>`}${navHtml("plans")}</div>`;
+    body = `<div class="page has-nav"><h1>${t("plans_title")}</h1>${state.plans.length ? state.plans.map((item) => `<p class="hint">📅 ${item.planned_for ? formatDate(item.planned_for) : ""}</p>${cardHtml(item, "fav")}<button class="ghost" data-act="unplan" data-id="${escapeHtml(String(item.id))}">${t("plan_remove")}</button>`).join("") : `<p class="empty">${t("plans_empty")}</p>`}${navHtml("plans")}</div>`;
   }
 
   let sheet = "";
@@ -2569,7 +2576,7 @@ function bind() {
     }
     if (act === "group") { state.screen = "group"; if (state.groupCode) refreshGroup(); else render(); return; }
     if (act === "favs") { state.screen = "favs"; render(); return; }
-    if (act === "auth-login") { state.authMode = "login"; state.authView = "contact"; state.authError = ""; state.authHint = ""; render(); return; }
+    if (act === "auth-login") { state.authMode = "login"; state.authView = "contact"; state.authError = ""; state.authHint = ""; state.authFirst = ""; state.authLast = ""; state.authPseudo = ""; render(); return; }
     if (act === "auth-signup") { state.authMode = "signup"; state.authView = "contact"; state.authError = ""; state.authHint = ""; render(); return; }
     if (act === "auth-open") { state.authView = "contact"; state.authError = ""; state.authHint = ""; render(); return; }
     if (act === "auth-back-names") { state.authView = "names"; state.authError = ""; render(); return; }
@@ -2793,6 +2800,13 @@ function bind() {
       persistAccount();
       state.detail = null;
       state.screen = "plans";
+      render(); return;
+    }
+    if (act === "unplan") {
+      // Planned outings could be added but never removed.
+      state.plans = state.plans.filter((x) => String(x.id) !== el.dataset.id);
+      save("sinki-plans", state.plans);
+      persistAccount();
       render(); return;
     }
     if (act === "close-sheet") { if (e.target.classList.contains("sheet") || el.dataset.act === "close-sheet") { state.detail = null; render(); } return; }
@@ -3529,7 +3543,8 @@ async function runSearch() {
   try {
     const [rows0, wRes] = await Promise.all([
       fetchOutingRows({}),
-      fetch("/api/weather?lat=" + state.city.latitude + "&lon=" + state.city.longitude),
+      // Weather is optional: an outage must not turn found outings into an error.
+      fetch("/api/weather?lat=" + state.city.latitude + "&lon=" + state.city.longitude).catch(() => null),
     ]);
     const rows = rows0;
     const alts = [];
@@ -3544,7 +3559,7 @@ async function runSearch() {
     state.nearestFallback = state.pool.some((o) => o.search_fallback === "nearest");
     if (state.nearestFallback) state.pool.sort((a, b) => (a.distance_km ?? 99) - (b.distance_km ?? 99));
     state.results = showPicked(pickThree(state.pool, searchVibe()));
-    const w = await wRes.json();
+    const w = wRes && wRes.ok ? await wRes.json().catch(() => ({})) : {};
     state.weather = weatherLabel(w.current?.weather_code, w.current?.temperature_2m);
     localStorage.setItem("sinki-last", JSON.stringify({
       city: state.city, people: state.people, date: state.date,
@@ -3689,6 +3704,10 @@ async function verifyLoginCode() {
     await persistAccount();
     state.authView = "closed";
     state.authCode = "";
+    state.authHint = "";
+    state.authFirst = "";
+    state.authLast = "";
+    state.authPseudo = "";
     state.screen = "account";
   } catch (err) {
     state.authError = String(err.message || err);
@@ -3711,6 +3730,8 @@ async function logoutAccount() {
   state.favs = [];
   state.plans = [];
   state.authView = "closed";
+  state.authHint = "";
+  state.authError = "";
   state.accountDeleteAsk = false;
   localStorage.removeItem("sinki-session");
   localStorage.removeItem("sinki-account");
@@ -3739,6 +3760,7 @@ async function deleteAccountForever() {
     state.plusPeriod = "month";
     state.myEvents = [];
     state.authView = "closed";
+    state.authHint = "";
     state.accountDeleteAsk = false;
     state.screen = "account";
   } catch (err) {

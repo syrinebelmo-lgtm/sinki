@@ -1293,26 +1293,53 @@ OUTINGS_INFLIGHT = {}
 OUTINGS_INFLIGHT_LOCK = threading.Lock()
 
 
+def _finite(raw, low=None, high=None):
+    """float(raw) when it is a real number inside [low, high], else None.
+
+    "abc", "nan", "inf" or a latitude of 500 used to crash the search (400 with a
+    Python message) or, for radius_km=inf, return outings from another country.
+    """
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(val):
+        return None
+    if (low is not None and val < low) or (high is not None and val > high):
+        return None
+    return val
+
+
+def outing_search_params(params):
+    """(lat, lon, radius_km, budget) parsed safely from the query string."""
+    def one(name, default=None):
+        vals = params.get(name) or [default]
+        return vals[0] if vals else default
+
+    lat = _finite(one("lat"), -90, 90)
+    lon = _finite(one("lon"), -180, 180)
+    if lat is None or lon is None:
+        lat = lon = None
+    radius = _finite(one("radius_km", "15"))
+    radius = 15.0 if radius is None or radius <= 0 else min(radius, 300.0)
+    budget = _finite(one("budget"))
+    if budget is not None:
+        budget = max(0.0, budget)
+    return lat, lon, radius, budget
+
+
 def _outings_cache_key(params):
     def one(name, default=""):
         vals = params.get(name) or [default]
         return str((vals[0] if vals else default) or "")
 
-    try:
-        lat = "%.3f" % round(float(one("lat")), 3)
-        lon = "%.3f" % round(float(one("lon")), 3)
-    except (TypeError, ValueError):
-        lat = lon = ""
-    try:
-        radius = "%.1f" % round(float(one("radius_km", "15")), 1)
-    except ValueError:
-        radius = "15.0"
+    lat, lon, radius, budget = outing_search_params(params)
     return (
         one("city_id"),
-        lat,
-        lon,
-        radius,
-        one("budget"),
+        "" if lat is None else "%.3f" % lat,
+        "" if lon is None else "%.3f" % lon,
+        "%.1f" % radius,
+        "" if budget is None else "%g" % budget,
         one("type", "all"),
         one("indoor", "any"),
         one("need_photo", "1"),
@@ -1368,17 +1395,7 @@ def fetch_outings(params):
 
 def fetch_outings_fresh(params):
     city_id = (params.get("city_id") or [""])[0].strip()
-    try:
-        lat = float(params.get("lat", [None])[0])
-        lon = float(params.get("lon", [None])[0])
-    except (TypeError, ValueError):
-        lat = lon = None
-    try:
-        radius = float((params.get("radius_km") or ["15"])[0])
-    except ValueError:
-        radius = 15
-    budget_raw = (params.get("budget") or [""])[0]
-    budget = float(budget_raw) if budget_raw not in ("", None) else None
+    lat, lon, radius, budget = outing_search_params(params)
     typ = (params.get("type") or ["all"])[0]
     if typ == "shopping" and radius < 20:
         radius = 20.0
@@ -1871,23 +1888,28 @@ def update_group(code, change):
 def report_group_message(body):
     """Apple 1.2: users can flag objectionable messages. The message is hidden
     for everyone and the team gets the text by mail (or in the logs)."""
-    code = str((body or {}).get("code") or "")
-    mid = str((body or {}).get("message_id") or "")
+    code = _short_text((body or {}).get("code"), 40)
+    mid = _short_text((body or {}).get("message_id"), 64)
+    if not mid:
+        raise ValueError("Message introuvable")
     found = {}
 
     def change(filters):
+        # update_group retries this on a concurrent write: start clean each time,
+        # otherwise the retry kept the reported message and still answered ok.
+        found.clear()
         chat = []
         for msg in filters.get("chat") or []:
-            if str(msg.get("id")) == mid and not found:
+            if isinstance(msg, dict) and str(msg.get("id")) == mid and not found:
                 found.update(msg)
                 continue
             chat.append(msg)
+        if not found:
+            raise ValueError("Message introuvable")
         filters["chat"] = chat
         return filters
 
     update_group(code, change)
-    if not found:
-        raise ValueError("Message introuvable")
     plain = "Message signalé dans le groupe %s\nAuteur : %s\nTexte : %s" % (code, found.get("name"), found.get("text"))
     print("chat_report group=%s message=%s" % (code, mid), flush=True)
     if has_resend_key():
@@ -1898,21 +1920,41 @@ def report_group_message(body):
     return {"ok": True}
 
 
+def _short_text(value, limit):
+    """Chat fields come straight from any phone: never trust their type."""
+    if value is None or isinstance(value, (dict, list)):
+        return ""
+    return str(value).strip()[:limit]
+
+
+def _price_or_none(value):
+    if isinstance(value, bool):
+        return None
+    val = _finite(value, 0, 1000000)
+    if val is None:
+        return None
+    return int(val) if val == int(val) else val
+
+
 def compact_outing(outing):
+    """Outing card shared in a group. Everything is re-typed: the group chat is
+    rendered for every member, so a crafted currency or photo URL must not get in."""
     if not isinstance(outing, dict):
         return None
-    oid = outing.get("id")
-    name = outing.get("name")
+    oid = _short_text(outing.get("id"), 64)
+    name = _short_text(outing.get("name"), 200)
     if not oid or not name:
         return None
+    currency = _short_text(outing.get("currency"), 3).upper()
+    photo = _short_text(outing.get("photo_url"), 1000)
     return {
         "id": oid,
         "name": name,
-        "price_min": outing.get("price_min"),
-        "price_max": outing.get("price_max"),
-        "currency": outing.get("currency"),
-        "photo_url": outing.get("photo_url"),
-        "category": outing.get("category"),
+        "price_min": _price_or_none(outing.get("price_min")),
+        "price_max": _price_or_none(outing.get("price_max")),
+        "currency": currency if re.fullmatch(r"[A-Z]{3}", currency) else None,
+        "photo_url": photo if re.match(r"^(https?://|/(avatars|event-photos)/)", photo) and '"' not in photo else None,
+        "category": _short_text(outing.get("category"), 80) or None,
     }
 
 
@@ -1923,13 +1965,13 @@ def group_filters(group):
 
 
 def post_group_message(code, display_name, text, outing=None):
-    text = (text or "").strip()[:2000]
+    text = _short_text(text, 2000)
     compact = compact_outing(outing) if outing else None
     if not text and not compact:
         raise ValueError("Message vide")
     msg = {
         "id": secrets.token_hex(6),
-        "name": (display_name or "Pote")[:40],
+        "name": _short_text(display_name, 40) or "Pote",
         "text": text,
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
@@ -1946,7 +1988,7 @@ def post_group_message(code, display_name, text, outing=None):
 def set_group_poll(code, display_name, outings):
     options = []
     seen = set()
-    for row in outings or []:
+    for row in outings if isinstance(outings, list) else []:
         compact = compact_outing(row)
         if not compact or compact["id"] in seen:
             continue
@@ -1964,7 +2006,7 @@ def set_group_poll(code, display_name, outings):
         chat = list(filters.get("chat") or [])
         chat.append({
             "id": secrets.token_hex(6),
-            "name": (display_name or "Pote")[:40],
+            "name": _short_text(display_name, 40) or "Pote",
             "text": "Votez pour une sortie : " + " · ".join(o["name"] for o in options),
             "ts": ts,
         })
@@ -1975,15 +2017,16 @@ def set_group_poll(code, display_name, outings):
 
 
 def vote_group(code, display_name, voter_id, outing_id):
-    outing_id = str(outing_id or "")
-    voter_id = (voter_id or "").strip()[:64] or (display_name or "pote").strip()[:40]
+    outing_id = _short_text(outing_id, 64)
+    display_name = _short_text(display_name, 40)
+    voter_id = _short_text(voter_id, 64) or display_name or "pote"
 
     def change(filters):
         allowed = {str(o.get("id")) for o in ((filters.get("poll") or {}).get("options") or []) if o.get("id")}
         if outing_id not in allowed:
             raise ValueError("Cette sortie n’est pas dans le vote")
         votes = dict(filters.get("votes") or {})
-        votes[voter_id] = {"name": (display_name or "Pote")[:40], "outing_id": outing_id}
+        votes[voter_id] = {"name": display_name or "Pote", "outing_id": outing_id}
         filters["votes"] = votes
         return filters
 
@@ -2753,7 +2796,8 @@ def send_login_code(body, host_header=""):
     if mode == "login" and not exists and in_auth is not True:
         raise ValueError("Aucun compte avec ce mail. Crée-en un.")
     nick = str(body.get("nick") or "").strip()[:40]
-    if nick and local_auth.pseudo_taken(nick, email):
+    # The pseudo only matters for a new account; an existing one keeps its own.
+    if nick and not exists and local_auth.pseudo_taken(nick, email):
         raise ValueError("Ce pseudo est déjà pris. Choisis-en un autre.")
     on_render = running_on_render()
     note = "Regarde tes mails et tes spams. Sinki t’a envoyé un code à 6 chiffres."
@@ -3054,7 +3098,13 @@ def wiki_langlink(title, src_lang, dest_lang):
     return ""
 
 
-def wiki_summary(title, lang="fr"):
+WIKI_NEAR_KM = 1.5
+
+
+def wiki_summary(title, lang="fr", near=None):
+    """Intro of a Wikipedia page. With near=(lat, lon) the page must be geotagged
+    within WIKI_NEAR_KM: a lookup by name alone turned a restaurant called after
+    a toy into the toy's article."""
     slug = urllib.parse.quote((title or "").replace(" ", "_"))
     if not slug:
         return ""
@@ -3064,14 +3114,22 @@ def wiki_summary(title, lang="fr"):
         return ""
     if data.get("type") == "disambiguation":
         return ""
+    if near is not None:
+        coords = data.get("coordinates") or {}
+        try:
+            far = haversine_km(near[0], near[1], float(coords["lat"]), float(coords["lon"])) > WIKI_NEAR_KM
+        except (KeyError, TypeError, ValueError):
+            far = True
+        if far:
+            return ""
     extract = (data.get("extract") or "").strip()
     if len(extract) < 40:
         return ""
     return extract
 
 
-def wiki_readable(title, lang="fr"):
-    extract = wiki_summary(title, "fr")
+def wiki_readable(title, lang="fr", near=None):
+    extract = wiki_summary(title, "fr", near)
     if extract and looks_latin(extract):
         return extract
     langs = []
@@ -3084,14 +3142,14 @@ def wiki_readable(title, lang="fr"):
             continue
         linked = wiki_langlink(title, src, "fr")
         if linked:
-            extract = wiki_summary(linked, "fr")
+            extract = wiki_summary(linked, "fr", near)
             if extract:
                 return extract
-    extract = wiki_summary(title, "en")
+    extract = wiki_summary(title, "en", near)
     if extract and looks_latin(extract):
         return extract
     if lang and lang not in ("fr", "en"):
-        extract = wiki_summary(title, lang)
+        extract = wiki_summary(title, lang, near)
         if extract and looks_latin(extract):
             return extract
     return ""
@@ -3099,7 +3157,8 @@ def wiki_readable(title, lang="fr"):
 
 def wiki_nearby_extract(name, lat, lon):
     if lat is None or lon is None:
-        return wiki_readable(name, "fr") or wiki_readable(name, "en")
+        # Without a position nothing proves the article is about this place.
+        return ""
     qs = urllib.parse.urlencode(
         {
             "action": "query",
@@ -3133,15 +3192,15 @@ def wiki_nearby_extract(name, lat, lon):
                 score += 6
             ranked.append((score, dist, title, lang))
         ranked.sort(key=lambda x: (-x[0], x[1]))
+        # Only a page whose title matches the place. "Closest page within 80 m"
+        # described the street or the district instead (Berges du Rhône showed
+        # the rue de Marseille, a club showed the old river port).
         if ranked and ranked[0][0] >= 12:
             extract = wiki_readable(ranked[0][2], ranked[0][3])
             if extract:
                 return extract
-        if ranked and ranked[0][1] <= 80:
-            extract = wiki_readable(ranked[0][2], ranked[0][3])
-            if extract:
-                return extract
-    return wiki_readable(name, "fr") or wiki_readable(name, "en")
+    near = (lat, lon)
+    return wiki_readable(name, "fr", near) or wiki_readable(name, "en", near)
 
 
 def cuisine_phrase(raw):
@@ -3201,10 +3260,9 @@ def place_story(params):
     name = unescape_text((params.get("name") or [""])[0]).strip()
     source_id = (params.get("source_id") or [""])[0].strip()
     category = unescape_text((params.get("category") or [""])[0]).strip()
-    try:
-        lat = float((params.get("lat") or [""])[0])
-        lon = float((params.get("lon") or [""])[0])
-    except (TypeError, ValueError):
+    lat = _finite((params.get("lat") or [""])[0], -90, 90)
+    lon = _finite((params.get("lon") or [""])[0], -180, 180)
+    if lat is None or lon is None:
         lat = lon = None
     cache_key = source_id or (name + "|" + str(round(lat or 0, 4)) + "|" + str(round(lon or 0, 4)))
     if cache_key in PLACE_STORY_CACHE:
@@ -3219,8 +3277,6 @@ def place_story(params):
         extract = wiki_readable(title, lang)
     if not extract:
         extract = wiki_nearby_extract(name, lat, lon)
-    if not extract:
-        extract = wiki_readable(name, "fr") or wiki_readable(name, "en")
     bits = []
     if extract:
         bits.append(extract)
@@ -3448,12 +3504,12 @@ def account_payload(user, bearer=None):
 def sync_account(user, bearer, body):
     uid = user["id"]
     meta = user.get("user_metadata") or {}
-    nick = (body.get("nick") or meta.get("nick") or "")[:40]
+    nick = _short_text(body.get("nick") or meta.get("nick"), 40)
     first_name = str(body.get("first_name") or meta.get("first_name") or "").strip()[:40]
     last_name = str(body.get("last_name") or meta.get("last_name") or "").strip()[:40]
-    group_code = (body.get("group_code") or "").strip().upper()
-    fav_ids = body.get("fav_ids") or []
-    plans = compact_plans(body.get("plans") or [])
+    group_code = _short_text(body.get("group_code"), 40).upper()
+    fav_ids = body.get("fav_ids") if isinstance(body.get("fav_ids"), list) else []
+    plans = compact_plans(body.get("plans") if isinstance(body.get("plans"), list) else [])
     group = None
     try:
         group = attach_user_group(uid, first_name or nick, group_code)
@@ -3600,10 +3656,19 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_error(404)
 
     def json_body(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        if not length:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ValueError("Requête invalide")
+        if length <= 0:
             return {}
-        return json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+        except (ValueError, UnicodeDecodeError):
+            # Used to answer with the raw Python parser message.
+            raise ValueError("Requête invalide")
+        # Every route reads body.get(...): a JSON list or string used to crash with a 500.
+        return body if isinstance(body, dict) else {}
 
     def send_json(self, payload, status=200, cache="no-store"):
         data = json.dumps(unescape_payload(payload), ensure_ascii=False).encode("utf-8")
@@ -3684,17 +3749,25 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/search":
                 payload = search_catalog((qs.get("q") or [""])[0], (qs.get("country") or [""])[0])
             elif path == "/api/weather":
-                lat = (qs.get("lat") or [""])[0]
-                lon = (qs.get("lon") or [""])[0]
+                lat = _finite((qs.get("lat") or [""])[0], -90, 90)
+                lon = _finite((qs.get("lon") or [""])[0], -180, 180)
+                if lat is None or lon is None:
+                    self.send_json({"error": "Position invalide"}, 400)
+                    return
                 url = (
                     "https://api.open-meteo.com/v1/forecast?latitude="
-                    + urllib.parse.quote(lat)
+                    + str(lat)
                     + "&longitude="
-                    + urllib.parse.quote(lon)
+                    + str(lon)
                     + "&current=temperature_2m,weather_code"
                 )
-                with urllib.request.urlopen(url, timeout=20) as resp:
-                    payload = json.loads(resp.read().decode("utf-8"))
+                try:
+                    with urllib.request.urlopen(url, timeout=20) as resp:
+                        payload = json.loads(resp.read().decode("utf-8"))
+                except (OSError, ValueError):
+                    # Weather is a nice-to-have: an Open-Meteo outage is not a client error.
+                    self.send_json({"error": "Météo indisponible"}, 502)
+                    return
             elif path == "/api/groups" and post:
                 body = self.json_body()
                 payload = create_group(body.get("name") or "Groupe Sinki")
@@ -3755,14 +3828,23 @@ class Handler(SimpleHTTPRequestHandler):
                     if not token:
                         self.send_json({"error": "interdit"}, 403)
                         return
-                    row = event_store.review_event(qs_id, action, token, require_token=True)
-                    ok = row.get("status") == "approved"
-                    title = "Événement validé" if ok else "Événement refusé"
-                    note = "Il est boosté 24 h dans Explorer." if ok else "Il n’apparaîtra pas dans l’app."
+                    try:
+                        row = event_store.review_event(qs_id, action, token, require_token=True)
+                    except ValueError:
+                        # Clicked from the moderation mail: show a page, not raw JSON.
+                        row = None
+                    ok = bool(row) and row.get("status") == "approved"
+                    if row is None:
+                        title = "Lien invalide"
+                        note = "Cet événement n’existe plus ou le lien est incomplet."
+                    else:
+                        title = "Événement validé" if ok else "Événement refusé"
+                        note = "Il est boosté 24 h dans Explorer." if ok else "Il n’apparaîtra pas dans l’app."
                     self.send_html(
                         "<!doctype html><html lang=\"fr\"><meta charset=\"utf-8\"><title>Sinki</title>"
                         "<body style=\"font-family:Inter,sans-serif;padding:32px;color:#1c2a22\">"
-                        "<h1>Sinki</h1><p><strong>%s</strong></p><p>%s</p></body></html>" % (title, note)
+                        "<h1>Sinki</h1><p><strong>%s</strong></p><p>%s</p></body></html>" % (title, note),
+                        200 if row is not None else 400,
                     )
                     return
             elif path == "/api/events/like" and post:
