@@ -79,7 +79,7 @@ GENERIC = re.compile(
     r"beffroi|rondvaart|recreation ground)$",
     re.I,
 )
-SKIP_NAME = re.compile(r"\b(war memorial|cenotaph|grave|tomb|statue of|bust of|h[oô]tel|hotel|hostel|motel)\b", re.I)
+SKIP_NAME = re.compile(r"\b(war memorial|cenotaph|grave|tomb|statue of|bust of|h[oô]tel|hotel|hostel|motel|former|ancien|ehemalig)\b", re.I)
 
 
 def env():
@@ -96,7 +96,7 @@ def http_json(url, data=None, headers=None, timeout=120, method=None, tries=4):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read()
-            return json.loads(raw) if raw else None
+            return json.loads(raw, strict=False) if raw else None
         except urllib.error.HTTPError as exc:
             if exc.code < 500 and exc.code != 429 or attempt == tries - 1:
                 raise
@@ -327,44 +327,306 @@ def upsert(url, key, rows):
 
 def main(argv):
     dry = "--dry" in argv
+    if "--world" in argv:
+        url, key = env()
+        log = open(os.path.expanduser("~/sinki-sauvegardes/migration/enrichissement.jsonl"), "a")
+        only = [a.split("=", 1)[1] for a in argv if a.startswith("--countries=")]
+        world(url, key, dry, log, skip={"FR"}, only=set(only[0].split(",")) if only else None)
+        return
     wanted = [a for a in argv if not a.startswith("--")] or list(CITIES)
     url, key = env()
     log = open(os.path.expanduser("~/sinki-sauvegardes/migration/enrichissement.jsonl"), "a")
     total = 0
     for cc in wanted:
         for slug in CITIES.get(cc, []):
-            got = http_json(
-                "%s/rest/v1/cities?select=id,name,latitude,longitude,country_code&slug=eq.%s" % (url, slug),
-                headers={"apikey": key, "Authorization": "Bearer " + key},
-            )
-            if not got:
-                print(cc, slug, "ville absente", flush=True)
-                continue
-            city = got[0]
             try:
-                els = overpass(city["latitude"], city["longitude"], 12)
-            except RuntimeError as exc:
-                print(cc, city["name"], "OSM indisponible, ville sautée:", exc, flush=True)
-                continue
-            qids = sorted({e["tags"]["wikidata"] for e in els if (e.get("tags") or {}).get("wikidata")})
-            wd = wikidata(qids)
-            photos = sorted({v["photo"] for v in wd.values() if v.get("photo")})
-            meta = commons_meta(photos)
-            rows = build_rows(city, els, wd, meta, cc)
-            known = existing_names(url, key, city["id"])
-            fresh = [r for r in rows if norm(r["name"]) not in known]
-            with_photo = sum(1 for r in fresh if r["photo_url"])
-            print("%s %-28s OSM %4d -> gardés %4d (nouveaux %4d, avec photo %4d)" % (cc, city["name"], len(els), len(rows), len(fresh), with_photo), flush=True)
-            if dry:
-                with open(os.path.expanduser("~/sinki-sauvegardes/migration/simulation_%s.jsonl" % cc), "a") as out:
-                    for r in fresh:
-                        out.write(json.dumps(r, ensure_ascii=False) + "\n")
-            elif fresh:
-                upsert(url, key, fresh)
-            log.write(json.dumps({"cc": cc, "city": city["name"], "kept": len(rows), "new": len(fresh), "photo": with_photo, "dry": dry}) + "\n")
-            total += len(fresh)
-            time.sleep(5)
+                total += (enrich_city_sparql if "--sparql" in argv else enrich_city)(url, key, cc, slug, dry, log)
+            except Exception as exc:  # coupure réseau, serveur saturé : on passe à la suivante
+                print(cc, slug, "erreur, ville sautée:", type(exc).__name__, exc, flush=True)
+                time.sleep(30)
     print("TOTAL nouveaux lieux:", total, "(simulation)" if dry else "", flush=True)
+
+
+def already_done(url, key, city_id):
+    q = "%s/rest/v1/outings?select=id&source_name=in.(osm_wikidata,wikidata)&city_id=eq.%s&limit=1" % (url, city_id)
+    return bool(http_json(q, headers={"apikey": key, "Authorization": "Bearer " + key}))
+
+
+def enrich_city(url, key, cc, slug, dry, log):
+    got = http_json(
+        "%s/rest/v1/cities?select=id,name,latitude,longitude,country_code&slug=eq.%s" % (url, slug),
+        headers={"apikey": key, "Authorization": "Bearer " + key},
+    )
+    if not got:
+        print(cc, slug, "ville absente", flush=True)
+        return 0
+    city = got[0]
+    if not dry and already_done(url, key, city["id"]):
+        print(cc, city["name"], "déjà enrichie", flush=True)
+        return 0
+    try:
+        els = overpass(city["latitude"], city["longitude"], 12)
+    except RuntimeError as exc:
+        print(cc, city["name"], "OSM indisponible, ville sautée:", exc, flush=True)
+        return 0
+    qids = sorted({e["tags"]["wikidata"] for e in els if (e.get("tags") or {}).get("wikidata")})
+    wd = wikidata(qids)
+    photos = sorted({v["photo"] for v in wd.values() if v.get("photo")})
+    meta = commons_meta(photos)
+    rows = build_rows(city, els, wd, meta, cc)
+    known = existing_names(url, key, city["id"])
+    fresh = [r for r in rows if norm(r["name"]) not in known]
+    with_photo = sum(1 for r in fresh if r["photo_url"])
+    print("%s %-28s OSM %4d -> gardés %4d (nouveaux %4d, avec photo %4d)" % (cc, city["name"], len(els), len(rows), len(fresh), with_photo), flush=True)
+    if dry:
+        with open(os.path.expanduser("~/sinki-sauvegardes/migration/simulation_%s.jsonl" % cc), "a") as out:
+            for r in fresh:
+                out.write(json.dumps(r, ensure_ascii=False) + "\n")
+    elif fresh:
+        upsert(url, key, fresh)
+    log.write(json.dumps({"cc": cc, "city": city["name"], "kept": len(rows), "new": len(fresh), "photo": with_photo, "dry": dry}) + "\n")
+    time.sleep(5)
+    return len(fresh)
+
+
+# --- Mode rapide : Wikidata seul (SPARQL), sans les serveurs OSM saturés ---------
+WD_TYPES = {
+    "Q33506": ("Musées et culture", "place"),      # musée
+    "Q207694": ("Musées et culture", "place"),     # musée d'art
+    "Q1007870": ("Musées et culture", "place"),    # galerie d'art
+    "Q24354": ("Musées et culture", "place"),      # théâtre
+    "Q41253": ("Musées et culture", "place"),      # cinéma
+    "Q1060829": ("Musées et culture", "place"),    # salle de concert
+    "Q23413": ("Musées et culture", "place"),      # château
+    "Q16560": ("Musées et culture", "place"),      # palais
+    "Q2977": ("Musées et culture", "place"),       # cathédrale
+    "Q22698": ("Lieux gratuits et balades", "walk"),   # parc
+    "Q1107656": ("Lieux gratuits et balades", "walk"), # jardin
+    "Q167346": ("Lieux gratuits et balades", "walk"),  # jardin botanique
+    "Q43501": ("Activités et loisirs", "place"),   # zoo
+    "Q2281788": ("Activités et loisirs", "place"), # aquarium
+    "Q194195": ("Activités et loisirs", "place"),  # parc d'attractions
+    "Q11315": ("Shopping", "place"),               # centre commercial
+    "Q330284": ("Shopping", "place"),              # marché
+    "Q622425": ("Soirées et concerts", "place"),   # boîte de nuit
+}
+
+
+# Order matters: a zoo that is also a park is an activity, a concert hall is a night out.
+CATEGORY_PRIORITY = ("Q43501", "Q2281788", "Q194195", "Q622425", "Q1060829", "Q11315", "Q330284",
+                     "Q33506", "Q207694", "Q1007870", "Q24354", "Q41253", "Q23413", "Q16560", "Q2977",
+                     "Q167346", "Q1107656", "Q22698")
+
+
+def pick_category(types, fallback):
+    for t in CATEGORY_PRIORITY:
+        if t in types:
+            cat, kind = WD_TYPES[t]
+            return ("Soirées et concerts", kind) if t == "Q1060829" else (cat, kind)
+    return WD_TYPES[fallback]
+
+
+def sparql_places(lat, lon, km):
+    q = """SELECT DISTINCT ?item ?coord ?image ?type WHERE {
+  SERVICE wikibase:around { ?item wdt:P625 ?coord . bd:serviceParam wikibase:center "Point(%f %f)"^^geo:wktLiteral . bd:serviceParam wikibase:radius "%d" . }
+  ?item wdt:P31 ?type .
+  VALUES ?type { %s }
+  ?item wdt:P18 ?image .
+}""" % (lon, lat, km, " ".join("wd:" + t for t in WD_TYPES))
+    url = "https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(q)
+    data = http_json(url, headers={"Accept": "application/sparql-results+json"}, timeout=90)
+    out = {}
+    for b in data["results"]["bindings"]:
+        qid = b["item"]["value"].rsplit("/", 1)[-1]
+        m = re.match(r"Point\(([-\d.]+) ([-\d.]+)\)", b["coord"]["value"])
+        if not m or qid in out:
+            continue
+        photo = urllib.parse.unquote(b["image"]["value"].rsplit("/", 1)[-1]).replace("_", " ")
+        out[qid] = {"lat": float(m.group(2)), "lon": float(m.group(1)), "photo": photo,
+                    "type": b["type"]["value"].rsplit("/", 1)[-1]}
+    return out
+
+
+def wd_labels(qids):
+    out = {}
+    for i in range(0, len(qids), 50):
+        url = ("https://www.wikidata.org/w/api.php?action=wbgetentities&format=json"
+               "&props=labels|descriptions|claims&languages=fr|en&ids=" + "|".join(qids[i : i + 50]))
+        try:
+            data = http_json(url, timeout=60)
+        except Exception:
+            continue
+        for qid, ent in (data.get("entities") or {}).items():
+            lab = ent.get("labels") or {}
+            desc = ent.get("descriptions") or {}
+            site = ((ent.get("claims") or {}).get("P856") or [{}])[0]
+            try:
+                website = site["mainsnak"]["datavalue"]["value"]
+            except (KeyError, TypeError):
+                website = None
+            claims = ent.get("claims") or {}
+            # P576 dissolved/demolished, P3999 closure date, P582 end time: not an outing anymore.
+            closed = any(claims.get(pid) for pid in ("P576", "P3999", "P582"))
+            # P5817 state of use: permanently closed / demolished / ruins / disused.
+            for c in claims.get("P5817") or []:
+                v = ((c.get("mainsnak") or {}).get("datavalue") or {}).get("value") or {}
+                if v.get("id") in ("Q30108381", "Q45403344", "Q109551565", "Q63065035", "Q11755880", "Q75727314"):
+                    closed = True
+            types = {((c.get("mainsnak") or {}).get("datavalue") or {}).get("value", {}).get("id") for c in claims.get("P31") or []}
+            if types & {"Q19860854", "Q1371849", "Q16831714", "Q3577956"}:  # destroyed building, demolished, gov/official residence
+                closed = True
+            text = " ".join(((desc.get(l) or {}).get("value") or "") for l in ("fr", "en")).lower()
+            if re.search(r"\b(former|defunct|demolished|closed|ancien cin|disparu|d[eé]moli|ferm[eé]|official residence|r[eé]sidence officielle|presidential|pr[eé]sidentiel|embassy|ambassade|military|militaire|pornographic|porn)", text):
+                closed = True
+            name = (lab.get("fr") or lab.get("en") or {}).get("value") or ""
+            out[qid] = {
+                "types": types,
+                "closed": closed,
+                "name": name[:1].upper() + name[1:],
+                "desc": (desc.get("fr") or desc.get("en") or {}).get("value") or "",
+                "website": website,
+            }
+        time.sleep(0.3)
+    return out
+
+
+def enrich_city_sparql(url, key, cc, slug, dry, log, city=None):
+    if city is None:
+        got = http_json("%s/rest/v1/cities?select=id,name,latitude,longitude&slug=eq.%s" % (url, slug),
+                        headers={"apikey": key, "Authorization": "Bearer " + key})
+        if not got:
+            print(cc, slug, "ville absente", flush=True)
+            return 0
+        city = got[0]
+    if not dry and already_done(url, key, city["id"]):
+        print(cc, city["name"], "déjà enrichie", flush=True)
+        return 0
+    places = sparql_places(city["latitude"], city["longitude"], 12)
+    labels = wd_labels(sorted(places))
+    meta = commons_meta(sorted({p["photo"] for p in places.values()}))
+    known = existing_names(url, key, city["id"])
+    now = datetime.now(timezone.utc).isoformat()
+    rows, seen = [], set()
+    for qid, p in places.items():
+        info = labels.get(qid) or {}
+        name = info.get("name", "").strip()
+        lic = meta.get(p["photo"])
+        if re.search(r"\b(former|ehemalig|ancien|demolished|d[eé]moli|closed|abandoned)\b", p["photo"], re.I):
+            continue  # photo of a place that no longer exists
+        if re.search(r"(logo|poster|affiche|\bmap\b|\bkarte\b|plan\b|locator|coat of arms|wappen|seal of|flag of|\.svg$)", p["photo"], re.I):
+            continue  # not a photo of the place
+        if info.get("closed") or not name or not lic or name.startswith("Q") or GENERIC.match(name) or SKIP_NAME.search(name):
+            continue
+        k = norm(name)
+        if k in seen or k in known:
+            continue
+        seen.add(k)
+        cat, kind = pick_category(info.get("types") or set(), p["type"])
+        rows.append({
+            "id": str(uuid.uuid5(NS, "wd:" + qid)),
+            "city_id": city["id"], "kind": kind, "category": cat,
+            "name": name[:200], "description": (info.get("desc") or "")[:500] or None,
+            "address": None, "latitude": p["lat"], "longitude": p["lon"],
+            "price_min": None, "price_max": None, "currency": CURRENCY.get(cc, "EUR"),
+            "indoor": True if cat in ("Musées et culture", "Shopping") else (False if kind == "walk" else None),
+            "vibes": [], "transport_modes": [], "opening_hours": {},
+            "website_url": info.get("website"),
+            "photo_url": "https://commons.wikimedia.org/wiki/Special:FilePath/" + urllib.parse.quote(p["photo"]) + "?width=1280",
+            "photo_license": lic[0], "photo_credit": lic[1],
+            "image_source_url": "https://www.wikidata.org/wiki/" + qid,
+            "source_name": "wikidata", "source_id": "wd:" + qid,
+            "source_url": "https://www.wikidata.org/wiki/" + qid,
+            "is_active": True, "verified_at": now,
+        })
+    print("%s %-28s Wikidata %4d -> nouveaux %4d (tous avec photo)" % (cc, city["name"], len(places), len(rows)), flush=True)
+    if dry:
+        with open(os.path.expanduser("~/sinki-sauvegardes/migration/simulation_%s.jsonl" % cc), "a") as out:
+            for r in rows:
+                out.write(json.dumps(r, ensure_ascii=False) + "\n")
+    elif rows:
+        upsert(url, key, rows)
+    log.write(json.dumps({"cc": cc, "city": city["name"], "new": len(rows), "mode": "sparql", "dry": dry}) + "\n")
+    time.sleep(2)
+    return len(rows)
+
+
+# --- Tous les pays : 5 plus grandes villes de chaque pays (Wikidata) ----------------
+# Pays trop grands pour la requête « plus grandes villes » : centres fournis.
+EXTRA_CENTERS = {
+    "CN": [(31.2304, 121.4737), (39.9042, 116.4074), (22.5431, 114.0579), (23.1291, 113.2644), (30.5728, 104.0668),
+           (29.5630, 106.5516), (34.3416, 108.9398), (30.2741, 120.1551), (30.5928, 114.3055), (32.0603, 118.7969)],
+    "US": [(37.7749, -122.4194), (38.9072, -77.0369), (42.3601, -71.0589), (47.6062, -122.3321), (29.9511, -90.0715),
+           (32.7157, -117.1611), (39.9526, -75.1652), (29.7604, -95.3698), (28.5384, -81.3789), (30.2672, -97.7431)],
+    "CA": [(45.4215, -75.6972), (51.0447, -114.0719), (53.5461, -113.4938)],
+    "DE": [(51.0504, 13.7373), (48.7758, 9.1829), (51.2277, 6.7735), (51.3397, 12.3731), (49.4521, 11.0767)],
+    "GB": [(51.4545, -2.5879), (53.8008, -1.5491), (51.7520, -1.2577), (52.2053, 0.1218), (51.4816, -3.1791), (54.5973, -5.9301)],
+}
+
+CITY_TYPES = "wd:Q515 wd:Q1549591 wd:Q5119 wd:Q200250 wd:Q1637706"
+
+
+def biggest_cities(cc, n=5):
+    n = 10 if cc in ("US", "CN", "IN", "BR", "RU", "JP", "MX", "ID", "DE", "GB", "CA", "AU") else n
+    q = """SELECT ?city ?coord ?pop WHERE {
+  ?country wdt:P297 "%s" .
+  VALUES ?t { %s }
+  ?city wdt:P31 ?t ; wdt:P17 ?country ; wdt:P1082 ?pop ; wdt:P625 ?coord .
+} ORDER BY DESC(?pop) LIMIT 40""" % (cc, CITY_TYPES)
+    url = "https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(q)
+    try:
+        data = http_json(url, headers={"Accept": "application/sparql-results+json"}, timeout=90)
+    except urllib.error.HTTPError:
+        # Big countries: too many cities to sort. Million-plus cities only.
+        light = q.replace("VALUES ?t { %s }" % CITY_TYPES, "VALUES ?t { wd:Q1637706 wd:Q1549591 }")
+        url = "https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(light)
+        data = http_json(url, headers={"Accept": "application/sparql-results+json"}, timeout=90)
+    out, seen = [], set()
+    for b in data["results"]["bindings"]:
+        qid = b["city"]["value"]
+        m = re.match(r"Point\(([-\d.]+) ([-\d.]+)\)", b["coord"]["value"])
+        if not m or qid in seen:
+            continue
+        seen.add(qid)
+        out.append((float(m.group(2)), float(m.group(1))))
+        if len(out) >= n:
+            break
+    return out
+
+
+def local_cities():
+    path = os.path.expanduser("~/sinki-sauvegardes/migration/cities.jsonl.gz")
+    by = {}
+    for line in gzip.open(path, "rt", encoding="utf-8"):
+        c = json.loads(line)
+        if c.get("is_active", True):
+            by.setdefault(c["country_code"], []).append(c)
+    return by
+
+
+def world(url, key, dry, log, skip=(), only=None):
+    by = local_cities()
+    total = 0
+    for cc in sorted(by):
+        if cc in skip or (only is not None and cc not in only):
+            continue
+        try:
+            centers = EXTRA_CENTERS.get(cc) or biggest_cities(cc)
+        except Exception as exc:
+            print(cc, "villes introuvables:", type(exc).__name__, flush=True)
+            continue
+        used = set()
+        for lat, lon in centers:
+            best = min(by[cc], key=lambda c: (c["latitude"] - lat) ** 2 + (c["longitude"] - lon) ** 2)
+            if dist_km((lat, lon), (best["latitude"], best["longitude"])) > 15 or best["id"] in used:
+                continue
+            used.add(best["id"])
+            try:
+                total += enrich_city_sparql(url, key, cc, best.get("slug"), dry, log, city=best)
+            except Exception as exc:
+                print(cc, best["name"], "erreur, ville sautée:", type(exc).__name__, flush=True)
+                time.sleep(20)
+        time.sleep(1)
+    print("TOTAL monde nouveaux lieux:", total, flush=True)
 
 
 if __name__ == "__main__":
