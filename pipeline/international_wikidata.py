@@ -306,7 +306,7 @@ def build_rows(city, elements, wd, meta, cc):
 def existing_names(url, key, city_id):
     names, offset = set(), 0
     while True:
-        q = "%s/rest/v1/outings?select=name,source_name&city_id=eq.%s&limit=1000&offset=%d" % (url, city_id, offset)
+        q = "%s/rest/v1/outings?select=name,source_name&city_id=eq.%s&order=id&limit=1000&offset=%d" % (url, city_id, offset)
         rows = http_json(q, headers={"apikey": key, "Authorization": "Bearer " + key})
         for r in rows:
             if r.get("source_name") != "osm_wikidata":
