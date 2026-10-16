@@ -554,6 +554,9 @@ def photo_matches_place(url, name, address=""):
     return bool(where & file_words)
 
 
+INVENTED_DRINK = {"THB": 120.0, "EUR": 8.0, "USD": 10.0, "GBP": 8.0, "JPY": 800.0, "CNY": 40.0}
+
+
 def qc_outing(row):
     """Photo cassée → vide. 0 € sur un lieu payant → prix à confirmer. Billets / pièce d’identité seulement si utile."""
     if not isinstance(row, dict):
@@ -567,6 +570,8 @@ def qc_outing(row):
         unrelated_infrastructure = re.search(r"\b(bus stop|bus station|arr[eê]t de bus|parking|car park)\b", filename)
         if unrelated_infrastructure and not re.search(r"\b(bus stop|bus station|arr[eê]t de bus|parking|car park)\b", place_name):
             row["photo_url"] = None
+        elif str(row.get("image_source_url") or "").startswith("https://www.wikidata.org/wiki/"):
+            pass  # official photo of this very place (Wikidata P18, coordinates checked at import)
         elif not photo_matches_place(url, row.get("name") or "", row.get("address") or ""):
             row["photo_url"] = None
     cat = row.get("category") or ""
@@ -605,6 +610,17 @@ def qc_outing(row):
             unknown = True
         elif paid_look and not free_look and a == 0 and (b is None or b == 0):
             unknown = True
+    # The old OSM import gave every bar/pub/club outside France a made-up
+    # "drink" price (8 EUR, 8 GBP, 120 THB...). Show those as unknown.
+    if (
+        not unknown
+        and (row.get("source_name") or "") == "osm"
+        and a is not None
+        and a == b
+        and INVENTED_DRINK.get(str(row.get("currency") or "").upper(), 10.0) == a
+        and (cat == CAT_NIGHT or NIGHT_NAME.search(name))
+    ):
+        unknown = True
     if unknown:
         row["price_min"] = None
         row["price_max"] = None
@@ -1253,7 +1269,7 @@ def nearest_city_row(lat, lon):
 
 SELECT = (
     "id,city_id,kind,category,name,description,address,latitude,longitude,"
-    "price_min,price_max,currency,duration_minutes,indoor,photo_url,photo_license,photo_credit,"
+    "price_min,price_max,currency,duration_minutes,indoor,photo_url,photo_license,photo_credit,image_source_url,"
     "source_url,website_url,source_name,source_id"
 )
 

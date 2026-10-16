@@ -31,6 +31,16 @@ class PhotoPlaceCheckTests(unittest.TestCase):
     def test_audio_file_is_never_a_photo(self):
         self.check("Magyd Cherfi Concert", "Magyd%20Cherfi%20Lyon.wav", "Lyon", False)
 
+    def test_wikidata_official_photo_is_kept(self):
+        row = serve.qc_outing({"name": "Tate Modern", "address": "", "category": "Musées et culture",
+                               "photo_url": C + "Tate_Modern_2012.jpg", "image_source_url": "https://www.wikidata.org/wiki/Q193375"})
+        self.assertTrue(row["photo_url"])
+
+    def test_invented_drink_price_is_hidden(self):
+        row = serve.qc_outing({"name": "The Red Lion Pub", "category": "Soirées et concerts", "price_min": 8.0,
+                               "price_max": 8.0, "currency": "GBP", "source_name": "osm"})
+        self.assertTrue(row["price_unknown"])
+
     def test_non_wikimedia_photos_are_untouched(self):
         self.assertTrue(serve.photo_matches_place("https://static.apidae-tourisme.com/x.jpg", "Anything", ""))
 
