@@ -564,7 +564,7 @@ def request_code(email, profile=None):
     code = "%06d" % secrets.randbelow(1000000)
 
     def change(data):
-        if nick and _nick_taken_in(data, nick, email):
+        if nick and email not in (data.get("accounts") or {}) and _nick_taken_in(data, nick, email):
             raise ValueError("taken")
         data.setdefault("pending", {})[email] = {
             "code_hash": _code_digest(code),
@@ -630,13 +630,22 @@ def _upsert_account(data, email, profile, pending=None):
     pending = pending or {}
     profile = profile or {}
     accounts = data.setdefault("accounts", {})
-    acc = accounts.get(email) or {"id": str(uuid.uuid4()), "email": email, "fav_ids": [], "plans": []}
-    if profile.get("nick") and _nick_taken_in(data, profile.get("nick"), email):
+    existing = accounts.get(email)
+    acc = existing or {"id": str(uuid.uuid4()), "email": email, "fav_ids": [], "plans": []}
+
+    def pick(key):
+        # Logging in to an existing account must not overwrite its names with what
+        # was left in the sign-up form (it also blocked the login with "pseudo pris").
+        order = (acc.get(key), profile.get(key), pending.get(key)) if existing else (profile.get(key), pending.get(key), acc.get(key))
+        return str(next((v for v in order if v), "") or "")[:40]
+
+    nick = pick("nick")
+    if nick and nick_key(nick) != nick_key(acc.get("nick")) and _nick_taken_in(data, nick, email):
         raise ValueError("taken")
     acc["email"] = email
-    acc["first_name"] = (profile.get("first_name") or pending.get("first_name") or acc.get("first_name") or "")[:40]
-    acc["last_name"] = (profile.get("last_name") or pending.get("last_name") or acc.get("last_name") or "")[:40]
-    acc["nick"] = (profile.get("nick") or pending.get("nick") or acc.get("nick") or "")[:40]
+    acc["first_name"] = pick("first_name")
+    acc["last_name"] = pick("last_name")
+    acc["nick"] = nick
     accounts[email] = acc
     return acc
 
