@@ -67,6 +67,8 @@ CITIES = {
     "TH": ["bangkok-th", "chiang-mai-th", "phuket-th"],
 }
 
+EXTRA_ONLY = "--extra" in sys.argv
+
 CURRENCY = {
     "GB": "GBP", "CH": "CHF", "CZ": "CZK", "HU": "HUF", "PL": "PLN", "DK": "DKK", "SE": "SEK",
     "NO": "NOK", "MA": "MAD", "US": "USD", "CA": "CAD", "JP": "JPY", "TH": "THB",
@@ -309,7 +311,7 @@ def existing_names(url, key, city_id):
         q = "%s/rest/v1/outings?select=name,source_name&city_id=eq.%s&order=id&limit=1000&offset=%d" % (url, city_id, offset)
         rows = http_json(q, headers={"apikey": key, "Authorization": "Bearer " + key})
         for r in rows:
-            if r.get("source_name") != "osm_wikidata":
+            if EXTRA_ONLY or r.get("source_name") != "osm_wikidata":
                 names.add(norm(r.get("name")))
         if len(rows) < 1000:
             return names
@@ -412,6 +414,26 @@ WD_TYPES = {
 }
 
 
+# --- Types supplémentaires : nature, rando, manger, sortir, détente ----------------
+WD_EXTRA = {
+    "Q40080": ("Lieux gratuits et balades", "walk"),     # plage
+    "Q6017969": ("Lieux gratuits et balades", "walk"),   # point de vue
+    "Q34038": ("Randonnées", "walk"),                    # cascade
+    "Q179049": ("Randonnées", "walk"),                   # réserve naturelle
+    "Q46169": ("Randonnées", "walk"),                    # parc national
+    "Q1056592": ("Shopping", "place"),                   # rue piétonne
+    "Q11707": ("Restaurants et cafés", "restaurant"),    # restaurant
+    "Q30022": ("Restaurants et cafés", "restaurant"),    # café
+    "Q187456": ("Soirées et concerts", "place"),         # bar
+    "Q131734": ("Soirées et concerts", "place"),         # brasserie (bière)
+    "Q156362": ("Activités et loisirs", "place"),        # domaine viticole
+    "Q133215": ("Soirées et concerts", "place"),         # casino
+    "Q740326": ("Activités et loisirs", "place"),        # parc aquatique
+    "Q130003": ("Activités et loisirs", "place"),        # station de ski
+    "Q177380": ("Activités et loisirs", "place"),        # source chaude
+    "Q1341387": ("Activités et loisirs", "place"),       # spa / thermes
+}
+
 # Order matters: a zoo that is also a park is an activity, a concert hall is a night out.
 CATEGORY_PRIORITY = ("Q43501", "Q2281788", "Q194195", "Q622425", "Q1060829", "Q11315", "Q330284",
                      "Q33506", "Q207694", "Q1007870", "Q24354", "Q41253", "Q23413", "Q16560", "Q2977",
@@ -423,16 +445,20 @@ def pick_category(types, fallback):
         if t in types:
             cat, kind = WD_TYPES[t]
             return ("Soirées et concerts", kind) if t == "Q1060829" else (cat, kind)
-    return WD_TYPES[fallback]
+    for t in WD_EXTRA:
+        if t in types:
+            return WD_EXTRA[t]
+    return WD_TYPES.get(fallback) or WD_EXTRA[fallback]
 
 
 def sparql_places(lat, lon, km):
     q = """SELECT DISTINCT ?item ?coord ?image ?type WHERE {
   SERVICE wikibase:around { ?item wdt:P625 ?coord . bd:serviceParam wikibase:center "Point(%f %f)"^^geo:wktLiteral . bd:serviceParam wikibase:radius "%d" . }
-  ?item wdt:P31 ?type .
+  ?item %s ?type .
   VALUES ?type { %s }
   ?item wdt:P18 ?image .
-}""" % (lon, lat, km, " ".join("wd:" + t for t in WD_TYPES))
+}""" % (lon, lat, km, "wdt:P31/wdt:P279?" if EXTRA_ONLY else "wdt:P31",
+        " ".join("wd:" + t for t in (WD_EXTRA if EXTRA_ONLY else WD_TYPES)))
     url = "https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(q)
     data = http_json(url, headers={"Accept": "application/sparql-results+json"}, timeout=90)
     out = {}
@@ -490,6 +516,22 @@ def wd_labels(qids):
     return out
 
 
+_EXTRA_DONE = None
+
+
+def extra_done():
+    global _EXTRA_DONE
+    if _EXTRA_DONE is None:
+        import glob
+        _EXTRA_DONE = set()
+        for f in glob.glob(os.path.expanduser("~/sinki-sauvegardes/migration/run_wdx_*.log")):
+            for line in open(f, encoding="utf-8", errors="ignore"):
+                m = re.match(r"([A-Z]{2}) (.+?)\s+Wikidata\s+\d+ -> nouveaux", line)
+                if m:
+                    _EXTRA_DONE.add((m.group(1), m.group(2).strip()))
+    return _EXTRA_DONE
+
+
 def enrich_city_sparql(url, key, cc, slug, dry, log, city=None):
     if city is None:
         got = http_json("%s/rest/v1/cities?select=id,name,latitude,longitude&slug=eq.%s" % (url, slug),
@@ -498,10 +540,13 @@ def enrich_city_sparql(url, key, cc, slug, dry, log, city=None):
             print(cc, slug, "ville absente", flush=True)
             return 0
         city = got[0]
-    if not dry and already_done(url, key, city["id"]):
+    if EXTRA_ONLY and (cc, city["name"]) in extra_done():
+        print(cc, city["name"], "déjà faite (extra)", flush=True)
+        return 0
+    if not dry and not EXTRA_ONLY and already_done(url, key, city["id"]):
         print(cc, city["name"], "déjà enrichie", flush=True)
         return 0
-    places = sparql_places(city["latitude"], city["longitude"], 12)
+    places = sparql_places(city["latitude"], city["longitude"], 25 if EXTRA_ONLY else 12)
     labels = wd_labels(sorted(places))
     meta = commons_meta(sorted({p["photo"] for p in places.values()}))
     known = existing_names(url, key, city["id"])
