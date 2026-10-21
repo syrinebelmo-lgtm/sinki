@@ -28,7 +28,11 @@ BAD_NAME = re.compile(
     r"\b(hotel|h[oô]tel|hostel|motel|guest ?house|private|staff only|employees only|embassy|ambassade|"
     r"clinic|clinique|pharmacy|pharmacie|atm|parking|gas station|petrol station|station[- ]service|toilets?|"
     r"fixme|no name|sans nom)\b", re.I)
-JUNK_NAME = re.compile(r"^(\W*|\d{6,})$")  # vide, symboles seuls, ou un numéro d'identifiant
+JUNK_NAME = re.compile(r"^(\W*|\d{6,}|[\d\s+().-]{7,}|(https?://|www\.)\S+)$")  # vide, identifiant, téléphone, site web
+CLOSED_NAME = re.compile(r"\((closed|abandoned|demolished|ferm[eé]e?|cerrado|abandonado|geschlossen)\)|\b(abandoned|demolished|permanently closed)\b", re.I)
+GENERIC_NAME = re.compile(r"^(restaurant|restaurante|cafe|café|caf[eé]teria|coffee|coffee shop|bar|pub|park|parc|parque|beach|plage|"
+                          r"playa|museum|cinema|market|mercado|fast ?food|shop|store|mall|pizza|pizzeria|kiosk|kiosko|"
+                          r"snack|bakery|grill|burger|ice cream|glacier|food court|canteen)$", re.I)
 KEEP_NAME = re.compile(r"(museum|mus[eé]e|museo|muzeum|theat|th[eé][aâ]tre|teatro|park|parc|parque|garden|jardin|"
                        r"mall|shopping|complex|gallery|galerie|cinema|palace|palais)", re.I)
 
@@ -65,6 +69,10 @@ def check(url, key, dry):
         city = by_city.get(r["city_id"])
         if not name or len(name) < 2 or JUNK_NAME.match(name):
             bad[r["id"]] = "nom vide ou illisible"
+        elif CLOSED_NAME.search(name):
+            bad[r["id"]] = "fermé ou abandonné"
+        elif r["source_name"] == "osm_local" and GENERIC_NAME.match(name):
+            bad[r["id"]] = "nom générique (pas un vrai nom de lieu)"
         elif r["source_name"] == "osm_local" and BAD_NAME.search(name) and not KEEP_NAME.search(name):
             bad[r["id"]] = "pas une sortie (hôtel, privé, service…)"
         elif r.get("latitude") in (None, 0) or r.get("longitude") in (None, 0):

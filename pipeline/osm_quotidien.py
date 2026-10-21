@@ -23,6 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import international_wikidata as w  # noqa: E402
 
 KM = 6  # rayon autour du centre-ville
+# --villes=20 : plus de villes par pays (les 5 premières, déjà faites, sont sautées)
+N_CITIES = int(([a.split("=", 1)[1] for a in sys.argv if a.startswith("--villes=")] or ["5"])[0])
 SERVERS = ("https://overpass-api.de/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
            "https://overpass.kumi.systems/api/interpreter")
 
@@ -198,7 +200,7 @@ def main(argv):
             print(cc, "aucune ville dans la base", flush=True)
             continue
         try:
-            centers = w.EXTRA_CENTERS.get(cc) or w.biggest_cities(cc)
+            centers = w.biggest_cities(cc, N_CITIES) if N_CITIES > 5 else (w.EXTRA_CENTERS.get(cc) or w.biggest_cities(cc))
         except Exception as exc:
             print(cc, "villes introuvables:", type(exc).__name__, flush=True)
             continue

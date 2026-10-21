@@ -607,11 +607,12 @@ EXTRA_CENTERS = {
     "GB": [(51.4545, -2.5879), (53.8008, -1.5491), (51.7520, -1.2577), (52.2053, 0.1218), (51.4816, -3.1791), (54.5973, -5.9301)],
 }
 
-CITY_TYPES = "wd:Q515 wd:Q1549591 wd:Q5119 wd:Q200250 wd:Q1637706"
+CITY_TYPES = ("wd:Q515 wd:Q1549591 wd:Q5119 wd:Q200250 wd:Q1637706 wd:Q174844 wd:Q208511 wd:Q108178728 "
+              "wd:Q51929311 wd:Q486972 wd:Q3957")  # capitales, mégapoles, « plus grande ville »…
 
 
 def biggest_cities(cc, n=5):
-    n = 10 if cc in ("US", "CN", "IN", "BR", "RU", "JP", "MX", "ID", "DE", "GB", "CA", "AU") else n
+    n = max(n, 10) if cc in ("US", "CN", "IN", "BR", "RU", "JP", "MX", "ID", "DE", "GB", "CA", "AU") else n
     q = """SELECT ?city ?coord ?pop WHERE {
   ?country wdt:P297 "%s" .
   VALUES ?t { %s }
@@ -626,6 +627,13 @@ def biggest_cities(cc, n=5):
         url = "https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(light)
         data = http_json(url, headers={"Accept": "application/sparql-results+json"}, timeout=90)
     out, seen = [], set()
+    try:  # la capitale d'abord, quel que soit son type sur Wikidata
+        cap = http_json("https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(
+            'SELECT ?city ?coord WHERE { ?country wdt:P297 "%s" ; wdt:P36 ?city . ?city wdt:P625 ?coord . }' % cc),
+            headers={"Accept": "application/sparql-results+json"}, timeout=60)
+        data["results"]["bindings"] = cap["results"]["bindings"][:1] + data["results"]["bindings"]
+    except Exception:
+        pass
     for b in data["results"]["bindings"]:
         qid = b["city"]["value"]
         m = re.match(r"Point\(([-\d.]+) ([-\d.]+)\)", b["coord"]["value"])

@@ -858,7 +858,8 @@ def supabase_outings(filters, limit, pictured_only=False):
     pictured = safe_select(base + "&photo_url=like.http*&limit=" + str(limit))
     if pictured_only or len(pictured) >= limit:
         return pictured
-    rest = safe_select(base + "&photo_url=is.null&limit=" + str(max(1, min(limit - len(pictured), 40))))
+    # Pays peu photographiés : on complète jusqu'à la limite avec des lieux sans photo.
+    rest = safe_select(base + "&photo_url=is.null&limit=" + str(max(1, limit - len(pictured))))
     return pictured + rest
 
 
