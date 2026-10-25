@@ -200,7 +200,7 @@ def main(argv):
             print(cc, "aucune ville dans la base", flush=True)
             continue
         try:
-            centers = w.biggest_cities(cc, N_CITIES) if N_CITIES > 5 else (w.EXTRA_CENTERS.get(cc) or w.biggest_cities(cc))
+            centers = (w.EXTRA_CENTERS.get(cc, []) + w.biggest_cities(cc, N_CITIES)) if N_CITIES > 5 else (w.EXTRA_CENTERS.get(cc) or w.biggest_cities(cc))
         except Exception as exc:
             print(cc, "villes introuvables:", type(exc).__name__, flush=True)
             continue

@@ -42,13 +42,14 @@ def rest(url, key, path):
 
 
 def page(url, key, base):
-    out, off = [], 0
+    # Pagination par id (keyset) : un offset profond fait expirer la requête côté base.
+    out, last = [], ""
     while True:
-        rows = rest(url, key, "%s&order=id&limit=1000&offset=%d" % (base, off))
+        rows = rest(url, key, "%s%s&order=id&limit=1000" % (base, ("&id=gt." + last) if last else ""))
         out += rows
         if len(rows) < 1000:
             return out
-        off += 1000
+        last = rows[-1]["id"]
 
 
 def cities():
