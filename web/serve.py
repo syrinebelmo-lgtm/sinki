@@ -859,7 +859,10 @@ def supabase_outings(filters, limit, pictured_only=False):
     if pictured_only or len(pictured) >= limit:
         return pictured
     # Pays peu photographiés : on complète jusqu'à la limite avec des lieux sans photo.
-    rest = safe_select(base + "&photo_url=is.null&limit=" + str(max(1, limit - len(pictured))))
+    # Tri par id (uuid, donc mélangé) : sinon l'ordre d'insertion ne renvoie que des restaurants.
+    # Seulement par ville : sur un rectangle géographique ce tri ferait expirer la requête.
+    order = "&order=id" if "city_id=" in filters else ""
+    rest = safe_select(base + "&photo_url=is.null" + order + "&limit=" + str(max(1, limit - len(pictured))))
     return pictured + rest
 
 
