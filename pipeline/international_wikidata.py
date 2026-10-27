@@ -67,6 +67,8 @@ CITIES = {
     "TH": ["bangkok-th", "chiang-mai-th", "phuket-th"],
 }
 
+EXTRA_ONLY = "--extra" in sys.argv
+
 CURRENCY = {
     "GB": "GBP", "CH": "CHF", "CZ": "CZK", "HU": "HUF", "PL": "PLN", "DK": "DKK", "SE": "SEK",
     "NO": "NOK", "MA": "MAD", "US": "USD", "CA": "CAD", "JP": "JPY", "TH": "THB",
@@ -309,7 +311,7 @@ def existing_names(url, key, city_id):
         q = "%s/rest/v1/outings?select=name,source_name&city_id=eq.%s&order=id&limit=1000&offset=%d" % (url, city_id, offset)
         rows = http_json(q, headers={"apikey": key, "Authorization": "Bearer " + key})
         for r in rows:
-            if r.get("source_name") != "osm_wikidata":
+            if EXTRA_ONLY or r.get("source_name") != "osm_wikidata":
                 names.add(norm(r.get("name")))
         if len(rows) < 1000:
             return names
@@ -412,6 +414,26 @@ WD_TYPES = {
 }
 
 
+# --- Types supplémentaires : nature, rando, manger, sortir, détente ----------------
+WD_EXTRA = {
+    "Q40080": ("Lieux gratuits et balades", "walk"),     # plage
+    "Q6017969": ("Lieux gratuits et balades", "walk"),   # point de vue
+    "Q34038": ("Randonnées", "walk"),                    # cascade
+    "Q179049": ("Randonnées", "walk"),                   # réserve naturelle
+    "Q46169": ("Randonnées", "walk"),                    # parc national
+    "Q1056592": ("Shopping", "place"),                   # rue piétonne
+    "Q11707": ("Restaurants et cafés", "restaurant"),    # restaurant
+    "Q30022": ("Restaurants et cafés", "restaurant"),    # café
+    "Q187456": ("Soirées et concerts", "place"),         # bar
+    "Q131734": ("Soirées et concerts", "place"),         # brasserie (bière)
+    "Q156362": ("Activités et loisirs", "place"),        # domaine viticole
+    "Q133215": ("Soirées et concerts", "place"),         # casino
+    "Q740326": ("Activités et loisirs", "place"),        # parc aquatique
+    "Q130003": ("Activités et loisirs", "place"),        # station de ski
+    "Q177380": ("Activités et loisirs", "place"),        # source chaude
+    "Q1341387": ("Activités et loisirs", "place"),       # spa / thermes
+}
+
 # Order matters: a zoo that is also a park is an activity, a concert hall is a night out.
 CATEGORY_PRIORITY = ("Q43501", "Q2281788", "Q194195", "Q622425", "Q1060829", "Q11315", "Q330284",
                      "Q33506", "Q207694", "Q1007870", "Q24354", "Q41253", "Q23413", "Q16560", "Q2977",
@@ -423,16 +445,20 @@ def pick_category(types, fallback):
         if t in types:
             cat, kind = WD_TYPES[t]
             return ("Soirées et concerts", kind) if t == "Q1060829" else (cat, kind)
-    return WD_TYPES[fallback]
+    for t in WD_EXTRA:
+        if t in types:
+            return WD_EXTRA[t]
+    return WD_TYPES.get(fallback) or WD_EXTRA[fallback]
 
 
 def sparql_places(lat, lon, km):
     q = """SELECT DISTINCT ?item ?coord ?image ?type WHERE {
   SERVICE wikibase:around { ?item wdt:P625 ?coord . bd:serviceParam wikibase:center "Point(%f %f)"^^geo:wktLiteral . bd:serviceParam wikibase:radius "%d" . }
-  ?item wdt:P31 ?type .
+  ?item %s ?type .
   VALUES ?type { %s }
   ?item wdt:P18 ?image .
-}""" % (lon, lat, km, " ".join("wd:" + t for t in WD_TYPES))
+}""" % (lon, lat, km, "wdt:P31/wdt:P279?" if EXTRA_ONLY else "wdt:P31",
+        " ".join("wd:" + t for t in (WD_EXTRA if EXTRA_ONLY else WD_TYPES)))
     url = "https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(q)
     data = http_json(url, headers={"Accept": "application/sparql-results+json"}, timeout=90)
     out = {}
@@ -490,6 +516,22 @@ def wd_labels(qids):
     return out
 
 
+_EXTRA_DONE = None
+
+
+def extra_done():
+    global _EXTRA_DONE
+    if _EXTRA_DONE is None:
+        import glob
+        _EXTRA_DONE = set()
+        for f in glob.glob(os.path.expanduser("~/sinki-sauvegardes/migration/run_wdx_*.log")):
+            for line in open(f, encoding="utf-8", errors="ignore"):
+                m = re.match(r"([A-Z]{2}) (.+?)\s+Wikidata\s+\d+ -> nouveaux", line)
+                if m:
+                    _EXTRA_DONE.add((m.group(1), m.group(2).strip()))
+    return _EXTRA_DONE
+
+
 def enrich_city_sparql(url, key, cc, slug, dry, log, city=None):
     if city is None:
         got = http_json("%s/rest/v1/cities?select=id,name,latitude,longitude&slug=eq.%s" % (url, slug),
@@ -498,10 +540,13 @@ def enrich_city_sparql(url, key, cc, slug, dry, log, city=None):
             print(cc, slug, "ville absente", flush=True)
             return 0
         city = got[0]
-    if not dry and already_done(url, key, city["id"]):
+    if EXTRA_ONLY and (cc, city["name"]) in extra_done():
+        print(cc, city["name"], "déjà faite (extra)", flush=True)
+        return 0
+    if not dry and not EXTRA_ONLY and already_done(url, key, city["id"]):
         print(cc, city["name"], "déjà enrichie", flush=True)
         return 0
-    places = sparql_places(city["latitude"], city["longitude"], 12)
+    places = sparql_places(city["latitude"], city["longitude"], 25 if EXTRA_ONLY else 12)
     labels = wd_labels(sorted(places))
     meta = commons_meta(sorted({p["photo"] for p in places.values()}))
     known = existing_names(url, key, city["id"])
@@ -557,16 +602,18 @@ EXTRA_CENTERS = {
            (29.5630, 106.5516), (34.3416, 108.9398), (30.2741, 120.1551), (30.5928, 114.3055), (32.0603, 118.7969)],
     "US": [(37.7749, -122.4194), (38.9072, -77.0369), (42.3601, -71.0589), (47.6062, -122.3321), (29.9511, -90.0715),
            (32.7157, -117.1611), (39.9526, -75.1652), (29.7604, -95.3698), (28.5384, -81.3789), (30.2672, -97.7431)],
+    "ID": [(-6.2146, 106.8451), (-7.2492, 112.7508), (-6.9222, 107.6069), (3.5833, 98.6667), (-6.9931, 110.4208), (-5.1486, 119.4319), (-2.9167, 104.7458), (-8.65, 115.2167), (-7.8014, 110.3647), (-7.9797, 112.6304), (-6.5944, 106.7892), (1.1494, 104.0249), (0.5167, 101.4417), (-1.2675, 116.8289), (1.4822, 124.8489), (-0.9492, 100.3543), (-5.4292, 105.2611), (-0.0319, 109.325), (-3.3199, 114.5907), (-10.1708, 123.6069)],  # Wikidata ne renvoie que la capitale pour l'Indonésie
     "CA": [(45.4215, -75.6972), (51.0447, -114.0719), (53.5461, -113.4938)],
     "DE": [(51.0504, 13.7373), (48.7758, 9.1829), (51.2277, 6.7735), (51.3397, 12.3731), (49.4521, 11.0767)],
     "GB": [(51.4545, -2.5879), (53.8008, -1.5491), (51.7520, -1.2577), (52.2053, 0.1218), (51.4816, -3.1791), (54.5973, -5.9301)],
 }
 
-CITY_TYPES = "wd:Q515 wd:Q1549591 wd:Q5119 wd:Q200250 wd:Q1637706"
+CITY_TYPES = ("wd:Q515 wd:Q1549591 wd:Q5119 wd:Q200250 wd:Q1637706 wd:Q174844 wd:Q208511 wd:Q108178728 "
+              "wd:Q51929311 wd:Q486972 wd:Q3957")  # capitales, mégapoles, « plus grande ville »…
 
 
 def biggest_cities(cc, n=5):
-    n = 10 if cc in ("US", "CN", "IN", "BR", "RU", "JP", "MX", "ID", "DE", "GB", "CA", "AU") else n
+    n = max(n, 10) if cc in ("US", "CN", "IN", "BR", "RU", "JP", "MX", "ID", "DE", "GB", "CA", "AU") else n
     q = """SELECT ?city ?coord ?pop WHERE {
   ?country wdt:P297 "%s" .
   VALUES ?t { %s }
@@ -581,6 +628,13 @@ def biggest_cities(cc, n=5):
         url = "https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(light)
         data = http_json(url, headers={"Accept": "application/sparql-results+json"}, timeout=90)
     out, seen = [], set()
+    try:  # la capitale d'abord, quel que soit son type sur Wikidata
+        cap = http_json("https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(
+            'SELECT ?city ?coord WHERE { ?country wdt:P297 "%s" ; wdt:P36 ?city . ?city wdt:P625 ?coord . }' % cc),
+            headers={"Accept": "application/sparql-results+json"}, timeout=60)
+        data["results"]["bindings"] = cap["results"]["bindings"][:1] + data["results"]["bindings"]
+    except Exception:
+        pass
     for b in data["results"]["bindings"]:
         qid = b["city"]["value"]
         m = re.match(r"Point\(([-\d.]+) ([-\d.]+)\)", b["coord"]["value"])
